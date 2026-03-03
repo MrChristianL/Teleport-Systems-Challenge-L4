@@ -2,7 +2,7 @@
 
 A prototype remote job execution service that provides a gRPC API to run, manage, and stream output from arbitrary Linux processes.
 
-## 📖 Documentation
+## Documentation
 - **[Design Document](./docs/design.md)**: Detailed technical specification covering gRPC streaming, mTLS security, user authorization, and process lifecycle.
 
 ## Features (Targeting Level 4)
