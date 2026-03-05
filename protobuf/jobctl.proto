@@ -56,5 +56,4 @@ message StreamOutputRequest {
 
 message StreamOutputResponse {
     bytes chunk = 1; // Raw output chunk
-    bool eof = 2; // End of file/output
 }
