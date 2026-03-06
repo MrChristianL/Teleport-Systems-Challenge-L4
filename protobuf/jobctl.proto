@@ -27,7 +27,7 @@ message StopJobRequest {
 
 message StopJobResponse {
     bool success = 1;
-    string message = 2; // "Job stopping..." or "Job not found"
+    string message = 2; // "job stopped" or "job not found"
 }
 
 // -- Get Status
@@ -40,7 +40,8 @@ message GetStatusResponse {
         UNKNOWN = 0;
         RUNNING = 1;
         FINISHED = 2; // job completed
-        FAILED = 3; // job failed or manually stopped
+        FAILED = 3; // job exited with non-zero exit code
+        STOPPED = 4; // job stopped by user
     }
 
     Status status = 1;    
