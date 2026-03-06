@@ -38,11 +38,10 @@ type Job struct {
 	cmd *exec.Cmd
 
 	// state management
-	mu            sync.RWMutex
-	status        Status
-	exitCode      int
-	stopReason    string
-	stopRequested bool
+	mu         sync.RWMutex
+	status     Status
+	exitCode   int
+	stopReason string
 
 	// output streaming
 	broker *broker
@@ -105,7 +104,7 @@ func (j *Job) Start() error {
 	return nil
 }
 
-// Stop terminates a job via SIGKILL, blocking until process exits and returns nil if already stopped
+// Stop terminates a job via SIGKILL, blocking until process exits and then marking it as Stopped
 func (j *Job) Stop() error {
 	j.mu.Lock()
 	if j.status != Running {
@@ -113,12 +112,18 @@ func (j *Job) Stop() error {
 		// job already stopped, desired state achieved
 		return nil
 	}
-	j.stopRequested = true
 	process := j.cmd.Process
 	j.mu.Unlock()
 
 	process.Kill()
 	<-j.done // wait for watchForFinish() to complete before returning
+
+	// Now set the state that Stop() caused
+	j.mu.Lock()
+	j.status = Stopped
+	j.stopReason = "stopped by user"
+	j.mu.Unlock()
+
 	return nil
 }
 
@@ -153,17 +158,17 @@ func (j *Job) watchForFinish() {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	// determine final state based on why job ended
-	if j.stopRequested {
-		// use called Stop()
-		j.status = Stopped
-		j.stopReason = "stopped by user"
+	// Only update if still running (Stop() hasn't already handled it)
+	if j.status != Running {
+		j.onceDone.Do(func() {
+			j.broker.close()
+			close(j.done)
+		})
+		return
+	}
 
-		// capture exit code for how process was terminated
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			j.exitCode = exitErr.ExitCode()
-		}
-	} else if err != nil {
+	// Process exited naturally
+	if err != nil {
 		// process exited with non-zero code
 		j.status = Failed
 		if exitErr, ok := err.(*exec.ExitError); ok {
