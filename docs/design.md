@@ -23,27 +23,42 @@ The remote job execution service provides process execution capabilities while s
 
 ## Output Streaming: Disk-backed Append Logging with Event-Driven Tailing
 
-To ensure multi-client support with full historic and live output streaming, each job will write its complete output (stdout + stderr, merged) to an on-disk log file. Instead of using discrete chunks or disk-level framing via length headers, the output is treated as a raw byte stream. This simplifies the architecture by delegating data boundary management to the gRPC and the OS.
+To ensure multi-client support with full historic and live output streaming, each job will write its complete output (stdout + stderr, merged) to an on-disk log file. The output is treated as a raw byte stream. This approach delegates data boundary management to the gRPC and the OS.
 
-To avoid file polling or busy-waiting, the service utilizes a `sync.Cond` broadcast mechanism. There are two parts to the success of this method: the writers and the reader.
+To avoid file polling or busy-waiting, the service utilizes a `sync.Cond` broadcast mechanism. There are two parts to the success of this method: the writer and the reader.
 
-- **The Writers**: When a job produces output, the service performs a synchronous write and `fsync` to disk. Only after the data is committed does the writer increment a global `totalWritten` byte offset and trigger `Broadcast`.
+- **The Writer**: When a job produces output, the service performs a synchronous write and `fsync` to disk. Only after the data is committed does the writer increment a global `totalWritten` byte offset and trigger `Broadcast`.
 - **The Reader**: Tailing readers utilize their own independent file descriptors to read the log file. Readers track their progress using a local byte offset. When a reader encounters an `io.EOF`, it checks its local offset against the broker’s `totalWritten` value while holding a mutex. If they are equal, the reader enters a `Wait()` state, parking the goroutine until the next `Broadcast` call.
 
-Each log file will have two concurrent writers. These exist for each job as goroutines for `stdout` and `stderr`. These goroutines publish their pipe's respective outputs to the broker. By serializing these writers, we can ensure that these writers are able to write in a single, ordered log file. This also helps to ensure that `totalWritten` remains accurate as each pipe (`cmd.StdoutPipe()` and `cmd.StderrPipe()`) streams to the broker.
+### Single Writer Architecture
+
+The broker implements `io.Writer` with mutex protection. Both stdout and stderr are assigned directly to the broker:
+
+```bash
+cmd.Stdout = job.broker
+cmd.Stderr = job.broker
+```
+
+When the OS writes to either stream, it calls `broker.Write()`, which:
+
+1. Acquires the mutex
+2. Writes to file and syncs
+3. Updates `totalWritten`
+4. Broadcasts to waiting readers
+5. Releases the mutex
+
+The approach naturally serializes the streams without additional goroutines, and consolidates all writes to a single writer. The OS handles buffering, and the broker’s mutex ensures atomic writes.
 
 ### Ordering Guarantees
 
-The previous design required a “seek-back” mechanism to handle partial writes of chunks (length headers that had yet to have accompanying data). The new byte stream design eliminates this race condition entirely.
-
 Data is written and synced to the log file before the `totalWritten` counter is ever updated. Additionally, the `Mutex` ensures that a reader cannot enter a `Wait()` state at the exact moment the writer is updating the offset. The reader either sees the new data and continues reading, or parks and is guaranteed to be awoken by the subsequent `Broadcast` calls.
 
- The following describes the `Mutex` ownership between the writer and reader:
+The following describes the `Mutex` ownership between the writer and reader:
 
-**Writers:**
+**Writer:**
 
 1. Acquires `b.mu`
-2. Writes and syncs to disk (still holding the lock in order to serialize the concurrent writers)
+2. Writes and syncs to disk
 3. Increment `totalWritten`
 4. Call `Broadcast` (valid to call while holding the lock in `sync.Cond`)
 5. Releases `b.mu` via `defer`
@@ -57,7 +72,7 @@ Data is written and synced to the log file before the `totalWritten` counter is 
 5. When woken by `Broadcast`, re-acquires `b.mu` automatically before returning from `Wait`
 6. Re-checks the condition (`for` loop), releases `b.mu`, and loops back to `f.Read`
 
-The byte stream implementation provides the same benefits that the chunk-based approach previously provided, including complete output, binary safety, and no per-client buffer logic. 
+The byte stream implementation provides the same benefits that the chunk-based approach previously provided, including complete output, binary safety, and no per-client buffer logic.
 
 ## Client Lifecycle
 
@@ -75,7 +90,7 @@ The difference between the context cancellation and the `done` channel is that w
 
 ### **Trade-offs**
 
-- **Memory Overload**: By storing log files of each job’s output, we run the risk of polluting the server’s storage or overwhelming the server’s available memory. Output is stored in the `/tmp` directory, meaning that log files are cleaned on every system reboot. However, since most modern Linux distributions use *tmpfs*,  `/tmp` is actually stored in memory. If a job were to create massive amounts of output, that output could deplete the server’s available memory. A rogue job printing infinite output would rapidly overload the remaining RAM of the server.
+- **Memory Overload**: By storing log files of each job’s output, we run the risk of polluting the server’s storage or overwhelming the server’s available memory. Output is stored in the `/tmp` directory, meaning that log files are cleaned on every system reboot. However, since most modern Linux distributions use *tmpfs*, `/tmp` is actually stored in memory. If a job were to create massive amounts of output, that output could deplete the server’s available memory. A rogue job printing infinite output would rapidly overload the remaining RAM of the server.
 - **Future Implementations**: Additional features to improve or address current trade-offs include log rotation or truncation to reduce the threat of log files growing infinitely, or log cleanup via either manual command or a TTL-based approach.
 
 ---
@@ -84,43 +99,68 @@ The difference between the context cancellation and the `done` channel is that w
 
 ## Process States
 
-To manage jobs and ensure proper interaction with each job, the service tracks each job with a simple status model. Jobs transition from `RUNNING` to either `FINISHED` (job completed) or `FAILED` (error or manual stop). 
+To manage jobs and ensure proper interaction with each job, the service tracks each job with a simple status model. 
 
 Available states include:
 
 - `RUNNING`: Job is actively executing
 - `FINISHED`: Process exited naturally with exit code 0
-- `FAILED`: Process exited with non-zero exit code or was manually stopped
+- `FAILED`: Process exited with non-zero exit code (non user-initiated)
+- `STOPPED`: User called `Stop()`
+
+State determination uses the `userStopped` flag:
+
+- If `userStopped` = true, then `STOPPED` (user action, regardless of exit code)
+- If err == nil (exit 0), then `FINISHED` (natural success)
+- if err ≠ nil (non-zero exit), then `FAILED` (crash, error, or external signal)
+
+This approach disambiguates exit code 137. If `Stop()` is called, the job’s status is marked `STOPPED`. Any other cause for exit code 137 (SIGKILL/OOM), then the job is marked as `FAILED`.
 
 ## Process Messages
 
-When a job ends, it outputs with it a message that describes an explanation for the job's status (`FINISHED`/`FAILED`), and the accompanying exit code. A job that has completed naturally will have Status `FINISHED`, while a job that did not exit on its own (e.g., from an error, stopped by a user) will have Status `FAILED`.
-
-Messages for `FINISHED` jobs will say "job completed successfully".
-
-Messages for `FAILED` jobs will include more relevant messages, such as "stopped by user", or "general error", etc.
+When a job ends, it outputs with it a message that describes an explanation for the job's status (`FINISHED`/`FAILED`/`STOPPED`), and the accompanying exit code. A job that has completed naturally will have Status `FINISHED`, while a job that did not exit on its own (e.g., from an error, stopped by a user) will have Status `FAILED`.
 
 Messages are correlated to exit codes returned by processes. An example of such error codes and their accompanying messages includes
 
 ```bash
+0:   "job completed successfully",
 1:   "general error",
 2:   "invalid usage or arguments",
 126: "command found but cannot execute (invalid permissions or target not executable)",
 127: "command not found",
-137: "stopped by user (SIGKILL)"
+137 + userStopped == true: "stopped by user (SIGKILL)"
+137 + userStopped == false: "process killed (external SIGKILL or OOM)"
 ```
 
 In this way, the service is able to reasonably help users differentiate which jobs have stopped naturally and which have been killed by the user.
 
-Note that for code 137, this specifies that it was stopped by the user. For the same of this implementation, a call to `stop()` will now utilize `SIGKILL` to halt a process, returning this error code.
+Note that for code 137, there are two options, depending on the state of the `userStopped` value. This variable specifies if a process was stopped by the user. For the same of this implementation, a call to `stop()` will utilize `SIGKILL` to halt a process. Since it is possible for jobs to return `SIGKILL` on their own (OOM, for instance), this method helps to determine the cause of a job returning this error code.
 
 This method of giving information to the user via both message and exit code helps to provide additional information regarding each job’s process lifecycle and status.
 
+## Process Termination
+
+The process by which jobs are terminated, `Stop()`, is synchronous. This function sends SIGKILL and blocks until the process terminates and all necessary cleanup completes.
+
+The process termination sequence is as follows:
+
+1. `Stop()` sends SIGKILL via `process.Kill()`
+2. `Stop()` blocks on `<-j.done`
+3. `Stop()` marks userStopped as true
+4. `watchForFinish()` (running in goroutine) is blocked on `cmd.Wait()`
+5. Process exits from signal
+6. `cmd.Wait()` returns, `watchForFinish()` updates state (since `userStopped` is true, state is marked as `STOPPED`) and closes `j.done`
+7. `Stop()` unblocks and returns
+
+The process is guaranteed to terminate when `Stop()` returns. 
+
+If the job already completed, `Stop()` returns success, as the desired state (process not running) is already achieved.
+
 ## Job IDs
 
-When a job is initialized, that job is assigned a unique 6-character alphanumeric (0-9a-z) identifier. This Job ID is generated via a `generateID` function that assigns unique job IDs utilizing the `crypto/rand` library. These 6-character IDs take the form of job-XXXXXX. 
+When a job is initialized, that job is assigned a unique 6-character alphanumeric (0-9a-z) identifier. This Job ID is generated via a `generateID` function that assigns unique job IDs utilizing the `crypto/rand` library. These 6-character IDs take the form of job-XXXXXX.
 
-To ensure no duplicate IDs exist, the `generateID` function includes a loop that checks if that ID exists in the job tracker's map already. If it does, it generates another random ID, and will continue to do so until a new ID is generated. This occurs at the time of generation, so no job ever has the same ID. 
+To ensure no duplicate IDs exist, the `generateID` function includes a loop that checks if that ID exists in the job tracker's map already. If it does, it generates another random ID, and will continue to do so until a new ID is generated. This occurs at the time of generation, so no job ever has the same ID.
 
 ### Considerations
 
@@ -139,7 +179,7 @@ Library calls:
 | --- | --- | --- |
 | StartJob | admin | `tracker.AddJob()` → `job.Start()` |
 | StopJob | admin | `tracker.GetJob()` → `job.Stop()` |
-| GetStatus | admin, user | `tracker.GetJob()` → read job state |
+| GetStatus | admin, user | `tracker.GetJob()` → `job.Status()`, `job.ExitCode()`, `job.StopReason()` |
 | StreamOutput | admin, user | `tracker.GetJob()` → `job.StreamFromDisk()` |
 
 All RPCs return structured gRPC status codes (`NotFound`, `PermissionDenied`,
@@ -184,14 +224,13 @@ This represents a single process execution. Jobs are returned by `GetJob()` an
 
 **Control Methods**:
 
-- `Start() error` - Begins job execution, initializes log writers to capture job output
+- `Start() error` - Begins job execution, initializes log writer to capture job output
 - `Stop() error` - Terminates job processes via `SIGKILL`
 
 **Query Methods**
 
 - `Status() Status` - Returns current job state (`RUNNING`, `FINISHED`, `FAILED`)
 - `ExitCode() int` - Returns the process exit code
-- `CalculateRuntime() string` - Returns human-readable duration (e.g. 1m 4s)
 - `StopReason() string` - Returns reason why the job stopped/failed
 
 **Output Streaming**
@@ -200,10 +239,7 @@ This represents a single process execution. Jobs are returned by `GetJob()` an
 
 ### **Broker:**
 
-After additional consideration, the broker is now internal-only. While originally considered part of the exported API, further review shows that it does not need to be. Here's why:
-
-- Users never instantiate the broker directly; `Job` creates it internally
-- Output streaming is accessed through `Job.StreamFromDisk()`, which provides a clean public interface
+- `Write(data []byte) (n int, err error)` - Meets the requirements of the `io.Writer` interface, allowing `cmd.Stdout` and `cmd.Stderr` to atomically write to the same log file as a singular, serialized writer.
 
 ---
 
@@ -241,8 +277,8 @@ A direct mapping between the verified identity and the permitted RPC actions det
 
 | Identity | StartJob | StopJob | GetStatus | StreamOutput |
 | --- | --- | --- | --- | --- |
-| admin.example.com | ✅ | ✅ | ✅ | ✅ |
-| user.example.com | ❌ | ❌ | ✅ | ✅ |
+| [admin.example.com](http://admin.example.com/) | ✅ | ✅ | ✅ | ✅ |
+| [user.example.com](http://user.example.com/) | ❌ | ❌ | ✅ | ✅ |
 | unknown | ❌ | ❌ | ❌ | ❌ |
 
 ### **Considerations:**
@@ -269,7 +305,7 @@ The CLI supports the following commands:
     The following are valid examples of `start` command calls:
     
     1. `./jobctl start seq 1 100` - calls `seq` command, counting from 1 to 100
-    2. `./jobctl start python3 [script.py](http://script.py)` - calls `python3` and runs the `script.py` file.
+    2. `./jobctl start python3 [script.py](<http://script.py>)` - calls `python3` and runs the `script.py` file.
     
     The result of a `start` command is the corresponding job ID for the newly initialized job.
     
@@ -279,7 +315,6 @@ The CLI supports the following commands:
 
 The CLI also includes support for the following flags:
 
-- `--follow` - Able to be passed during a `start` call, this flag subscribes the user to stream the output of the newly initialized job immediately following `start` ; the default value for this flag is `false`
 - `--cert <string>` - For ease of testing, this flag allows users of the CLI to specify which certificate they wish to utilize when running a command; the default value for this is `"admin"`
     - Available options for this flag include: `"admin"`, `“user”`, `“unknown”` . Any additionally provided input will be treated as `"unknown"`.
 
@@ -294,8 +329,7 @@ Alice wishes to start a Python script that will take several hours. She starts i
 ```bash
 $ ./jobctl start python3 process_dataset.py
 
-Job initialized
-Job ID: job-8uzdiy
+job-8uzdiy
 ```
 
 Later, Alice checks on the job to ensure it’s still running:
@@ -305,7 +339,6 @@ $ ./jobctl status job-8uzdiy
 
 Job ID: job-8uzdiy
 Status: RUNNING
-Uptime: 40m 34s
 ```
 
 ---
@@ -315,10 +348,9 @@ Uptime: 40m 34s
 Bob starts a database backup. He monitors it initially to ensure it starts correctly, then disconnects to check back later.
 
 ```bash
-$ ./jobctl start /usr/local/bin/backup_database --follow
+$ ./jobctl start /usr/local/bin/backup_database | ./jobctl stream
 
-Job initialized
-Job ID: job-2p3jgu
+job-2p3jgu
 
 Beginning database backup process...
 Connecting to database...
@@ -347,10 +379,9 @@ Carol starts the job. Dave streams the same job from his terminal. Both see hist
 
 ```bash
 # Carol
-$ ./jobctl start --follow /usr/bin/diagnostics
+$ ./jobctl start /usr/bin/diagnostics | ./jobctl stream
 
-Job initialized
-Job ID: job-jk4s31
+job-jk4s31
 
 Starting diagnostics
 
@@ -375,15 +406,14 @@ Job ID: job-fw42gd
 
 $ ./jobctl stop job-fw42gd
 
-Job stopping...
+Success: job stopped
 
 $ ./jobctl status job-fw42gd
 
 Job ID: job-fw42gd
-Status: FAILED
+Status: STOPPED
 Message: stopped by user (SIGKILL)
 Exit Code: 137
-Uptime: 0m 6s
 ```
 
 ---
@@ -417,11 +447,10 @@ Job ID: job-234efg
 Status: FINISHED
 Message: job completed successfully
 Exit code: 0
-Uptime: 0m 24s
 
 $ ./jobctl stop job-234efg
 
-Error: [job-234efg] failed to stop: job is not running
+Success: job stopped
 ```
 
 ---
@@ -432,7 +461,7 @@ Certain things are enforced as law when considering the following implementation
 
 - **Append-only Source of Truth**: A job’s output is strictly append-only. Existing data is never to be modified or truncated during a job’s lifecycle.
 - **Reader-Write Isolation:** The producer of output never blocks reader progression. Slow or disconnected clients have zero impact on the job itself or other clients streaming output. ****
-- **One-way State Transitions**: Job states exclusively transition forward (`RUNNING → FINISHED/FAILED` ). Once a job is terminated, it cannot return to a running state. Restarting a process is classified as a new job.
+- **One-way State Transitions**: Job states exclusively transition forward (`RUNNING → FINISHED/STOPPED/FAILED` ). Once a job is terminated, it cannot return to a running state. Restarting a process is classified as a new job.
 
 ---
 
@@ -457,5 +486,3 @@ Certain things are enforced as law when considering the following implementation
 
 - **Expired certificate:** gRPC handshake fails before the request reaches the application
 - **Unknown Identity:** Authorization check rejects with a clear error message
-
----

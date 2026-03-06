@@ -44,9 +44,8 @@ message GetStatusResponse {
     }
 
     Status status = 1;    
-    string duration = 2; // time since job started in human-readable format, e.g. "5s", "1m30s"
-    int32 exit_code = 3; 
-    string message = 4;
+    int32 exit_code = 2; 
+    string message = 3;
 }
 
 // -- Stream Output
