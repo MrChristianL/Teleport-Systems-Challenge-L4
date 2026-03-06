@@ -27,7 +27,7 @@ To ensure multi-client support with full historic and live output streaming, eac
 
 To avoid file polling or busy-waiting, the service utilizes a `sync.Cond` broadcast mechanism. There are two parts to the success of this method: the writer and the reader.
 
-- **The Writer**: When a job produces output, the service performs a synchronous write and `fsync` to disk. Only after the data is committed does the writer increment a global `totalWritten` byte offset and trigger `Broadcast`.
+- **The Writer**: When a job produces output, the service performs a synchronous write. Only after the data is committed does the writer increment a global `totalWritten` byte offset and trigger `Broadcast`.
 - **The Reader**: Tailing readers utilize their own independent file descriptors to read the log file. Readers track their progress using a local byte offset. When a reader encounters an `io.EOF`, it checks its local offset against the broker’s `totalWritten` value while holding a mutex. If they are equal, the reader enters a `Wait()` state, parking the goroutine until the next `Broadcast` call.
 
 ### Single Writer Architecture
@@ -39,10 +39,12 @@ cmd.Stdout = job.broker
 cmd.Stderr = job.broker
 ```
 
+Since the readers share the same kernel, POSIX ensures that data is visible in the page cache immediately after `write()`, making hardware-level `fsync` unnecessary for streaming correctness.
+
 When the OS writes to either stream, it calls `broker.Write()`, which:
 
 1. Acquires the mutex
-2. Writes to file and syncs
+2. Writes to the kernel page cache (file write)
 3. Updates `totalWritten`
 4. Broadcasts to waiting readers
 5. Releases the mutex
@@ -51,21 +53,21 @@ The approach naturally serializes the streams without additional goroutines, and
 
 ### Ordering Guarantees
 
-Data is written and synced to the log file before the `totalWritten` counter is ever updated. Additionally, the `Mutex` ensures that a reader cannot enter a `Wait()` state at the exact moment the writer is updating the offset. The reader either sees the new data and continues reading, or parks and is guaranteed to be awoken by the subsequent `Broadcast` calls.
+Data is written to the kernel page cache before the `totalWritten` counter is ever updated. Additionally, the `Mutex` ensures that a reader cannot enter a `Wait()` state at the exact moment the writer is updating the offset. The reader either sees the new data and continues reading, or parks and is guaranteed to be awoken by the subsequent `Broadcast` calls.
 
 The following describes the `Mutex` ownership between the writer and reader:
 
 **Writer:**
 
 1. Acquires `b.mu`
-2. Writes and syncs to disk
+2. Writes to file
 3. Increment `totalWritten`
 4. Call `Broadcast` (valid to call while holding the lock in `sync.Cond`)
 5. Releases `b.mu` via `defer`
 
 **Reader:**
 
-1. `f.Read(buf)` with **no lock** - this is a direct OS call where the reader manages its own position in the file independently of the writer.
+1. `f.Read(buf)` with no lock - this is a direct OS call where the reader manages its own position in the file independently of the writer.
 2. If `Read` returns `io.EOF`, acquires `b.mu`
 3. Checks the condition `!b.closed && b.totalWritten == offset` inside a `for` loop
 4. Calls `b.cond.Wait()`, which atomically releases `b.mu` and parks the goroutine
@@ -128,33 +130,30 @@ Messages are correlated to exit codes returned by processes. An example of such 
 2:   "invalid usage or arguments",
 126: "command found but cannot execute (invalid permissions or target not executable)",
 127: "command not found",
-137 + userStopped == true: "stopped by user (SIGKILL)"
-137 + userStopped == false: "process killed (external SIGKILL or OOM)"
+137 + `Stop()`: "stopped by user (SIGKILL)"
+137: "process killed (external SIGKILL or OOM)"
 ```
 
 In this way, the service is able to reasonably help users differentiate which jobs have stopped naturally and which have been killed by the user.
 
-Note that for code 137, there are two options, depending on the state of the `userStopped` value. This variable specifies if a process was stopped by the user. For the same of this implementation, a call to `stop()` will utilize `SIGKILL` to halt a process. Since it is possible for jobs to return `SIGKILL` on their own (OOM, for instance), this method helps to determine the cause of a job returning this error code.
+Note that for code 137, there are two options, depending on if the process was manually stopped by the user. When ran, the `Stop()` function overwrites the job’s status to `STOPPED` and the job's message to explain that the job was stopped by the user. For the sake of this implementation, a call to `Stop()` will utilize `SIGKILL` to halt a process. Since it is possible for jobs to return `SIGKILL` on their own (OOM, for instance), this method helps to determine the cause of a job returning this error code.
 
 This method of giving information to the user via both message and exit code helps to provide additional information regarding each job’s process lifecycle and status.
 
 ## Process Termination
 
-The process by which jobs are terminated, `Stop()`, is synchronous. This function sends SIGKILL and blocks until the process terminates and all necessary cleanup completes.
+The process by which jobs are terminated, `Stop()`, is synchronous. This function sends SIGKILL and blocks until the process terminates and all necessary cleanup is complete.
 
 The process termination sequence is as follows:
 
-1. `Stop()` sends SIGKILL via `process.Kill()`
-2. `Stop()` blocks on `<-j.done`
-3. `Stop()` marks userStopped as true
-4. `watchForFinish()` (running in goroutine) is blocked on `cmd.Wait()`
-5. Process exits from signal
-6. `cmd.Wait()` returns, `watchForFinish()` updates state (since `userStopped` is true, state is marked as `STOPPED`) and closes `j.done`
-7. `Stop()` unblocks and returns
+1. `Stop()` acquires the mutex. If the job is not `Running`, it returns immediately as the desired state has already been met.
+2. `Stop()` calls `process.Kill()`.
+3. `Stop()` releases the lock and blocks on `<-j.done`
+4. The process receives `SIGKILL` and exits. In the background, `watchForFinish()` (which was blocked on `cmd.Wait()`) unblocks.
+5.  `watchForFinish()` acquires the lock. It checks if the status is still `Running`. If it is (meaning `Stop()` hasn't taken over yet), it updates the state to `Finished` or `Failed`. It then closes the `broker` and the `done` channel via `sync.Once`.
+6. Once `done` is closed, `Stop()` unblocks. It re-acquires the lock and explicitly overwrites the status to `Stopped` and sets the reason to `"stopped by user"`
 
-The process is guaranteed to terminate when `Stop()` returns. 
-
-If the job already completed, `Stop()` returns success, as the desired state (process not running) is already achieved.
+The process is guaranteed to terminate when `Stop()` returns, and any job stopped in this way will have its status and reason for stopping set to reflect the user’s choice of stopping the program.
 
 ## Job IDs
 
@@ -172,8 +171,7 @@ With 2.1 billion possible ID options, this approach balances CLI usability with 
 
 gRPC is used to support output streaming from the server’s processes to the clients.
 
-The service exposes four RPCs that translate client requests to Worker
-Library calls:
+The service exposes four RPCs that translate client requests to Worker Library calls:
 
 | RPC | Identity Permissions | Worker Library Mapping |
 | --- | --- | --- |
@@ -182,26 +180,21 @@ Library calls:
 | GetStatus | admin, user | `tracker.GetJob()` → `job.Status()`, `job.ExitCode()`, `job.StopReason()` |
 | StreamOutput | admin, user | `tracker.GetJob()` → `job.StreamFromDisk()` |
 
-All RPCs return structured gRPC status codes (`NotFound`, `PermissionDenied`,
-`FailedPrecondition`, `Internal`, `Canceled`, `ResourceExhausted`) to allow
-the CLI to distinguish user errors from system failures.
+All RPCs return structured gRPC status codes (`NotFound`, `PermissionDenied`, `FailedPrecondition`, `Internal`, `Canceled`, `ResourceExhausted`) to allow the CLI to distinguish user errors from system failures.
 
-`StreamOutput()` uses server-side streaming to deliver both historical and
-live output. The RPC handler calls `job.StreamFromDisk()` with a callback
-that sends each chunk over the gRPC stream. When the job finishes or the
-client disconnects, the gRPC stream returns `nil`, and the client reader exits.
+`StreamOutput()` uses server-side streaming to deliver both historical and live output. The RPC handler calls `job.StreamFromDisk()` with a callback that sends each chunk over the gRPC stream. When the job finishes or the client disconnects, the gRPC stream returns `nil`, and the client reader exits.
 
 ### Security Implementation
 
-The gRPC server enforces mTLS and identity-based authorization on every RPC:
+The gRPC server enforces mTLS and RBAC authorization on every RPC:
 
-1. TLS handshake validates client certificate
+1. TLS handshake validates the client certificate
 2. Extract SAN identity from certificate
-3. Check if identity is authorized for the requested RPC
-4. If unauthorized, return `PermissionDenied` before touching Worker Library
-5. If authorized, forward request to Worker Library
+3. Check if the identity is authorized for the requested RPC based on that identity’s role
+4. If unauthorized, or no role given, return `PermissionDenied` before touching Worker Library
+5. If authorized, forward the request to the Worker Library
 
-For additional detail regarding the mTLS an identity-based authorization design, see the Security section.
+For additional details regarding the mTLS and the RBAC authorization design, see the Security section.
 
 ## Worker Library Exported API
 
@@ -229,13 +222,13 @@ This represents a single process execution. Jobs are returned by `GetJob()` an
 
 **Query Methods**
 
-- `Status() Status` - Returns current job state (`RUNNING`, `FINISHED`, `FAILED`)
+- `Status() Status` - Returns current job state (`RUNNING`, `FINISHED`, `FAILED`, `STOPPED`)
 - `ExitCode() int` - Returns the process exit code
 - `StopReason() string` - Returns reason why the job stopped/failed
 
 **Output Streaming**
 
-- `StreamFromDisk(ctx context.Context, fn func([]byte) error) error` - Streams the complete output of the job's log file to the provided handler function. Blocks until the job finishes or the context is cancelled. Safe for any output volume. Can be called multiple times on the same job or after the job completes.
+- `StreamFromDisk(ctx context.Context, out io.Writer) error` - Streams the complete output of the job's log file to the provided `io.Writer`. Blocks until the job finishes or the context is cancelled. Safe for any output volume. Can be called multiple times on the same job or after the job completes.
 
 ### **Broker:**
 
@@ -257,9 +250,9 @@ To ensure authentication, this service utilizes mTLS over gRPC. To do this, both
 
 ---
 
-## Identity-Based Authorization
+## RBAC Authorization
 
-To ensure secure access, the service utilizes Identity-Based Authorization tied to the mTLS handshake. Rather than relying on separate tokens or passwords, the system treats the client’s verified certificate as the sole source of identity.
+To ensure secure access, the service utilizes RBAC Authorization tied to the mTLS handshake. Rather than relying on separate tokens or passwords, the system treats the client’s verified certificate as the sole source of the client’s identity. Every identity is assigned to a role, with each role having specific permissions. Any identity not previously registered is acknowledged as being “unknown”, and, therefore, is given no permissions.
 
 ### Identity Extraction
 
@@ -269,22 +262,24 @@ During the mTLS handshake, the service extracts the Subject Alternative Name (SA
 - **`user.example.com`**: Represents standard read-only access.
 - **`unknown.example.com`**: A placeholder identity for any certificate that does not have explicit permissions.
 
-### Permission Mapping
+### Role Mapping
 
-A direct mapping between the verified identity and the permitted RPC actions determines authorization. While these identities currently share names with their corresponding roles for simplicity, the architecture is designed to decouple the two, allowing for future Role-Based Access Control (RBAC) expansion.
+Each role includes a list of recognized identities. These are clients who have been identified as having appropriate authority.
+
+A direct mapping between the role and the RPC actions determines authorization. While these identities currently share names with their corresponding roles for simplicity, the architecture is designed to decouple the two, allowing for future Role-Based Access Control (RBAC) expansion.
 
 ### **User Authorization**
 
-| Identity | StartJob | StopJob | GetStatus | StreamOutput |
+| Role | StartJob | StopJob | GetStatus | StreamOutput |
 | --- | --- | --- | --- | --- |
-| [admin.example.com](http://admin.example.com/) | ✅ | ✅ | ✅ | ✅ |
-| [user.example.com](http://user.example.com/) | ❌ | ❌ | ✅ | ✅ |
+| admin | ✅ | ✅ | ✅ | ✅ |
+| user | ❌ | ❌ | ✅ | ✅ |
 | unknown | ❌ | ❌ | ❌ | ❌ |
 
 ### **Considerations:**
 
-- **Security by Default:** The system follows the principle of least privilege. Any identity not explicitly defined in the authorization map (such as `unknown.example.com`) is denied access to all functional RPCs by default.
-- **Scalability:** For the scope of this project, a hardcoded identity map provides maximum clarity and security and limits the need for external configuration files or third-party dependencies.
+- **Security by Default:** The system follows the principle of least privilege. Any identity not explicitly defined in the role map is denied access to all functional RPCs by default.
+- **Scalability:** By identifying clients in this way, future identities can be added to the appropriate roles rapidly. Additionally, should a role ever need its permissions altered, this method allows all relevant clients to receive updated permissions at once rather than manually changing each client’s permissions. RBAC makes the authorization of this system more future-proof for an implementation of this scale.
 
 ### **Trade-offs:**
 
@@ -315,7 +310,7 @@ The CLI supports the following commands:
 
 The CLI also includes support for the following flags:
 
-- `--cert <string>` - For ease of testing, this flag allows users of the CLI to specify which certificate they wish to utilize when running a command; the default value for this is `"admin"`
+- `--role <string>` - For ease of testing, this flag allows users of the CLI to specify which role they wish to utilize when running a command; the default value for this is `"admin"`
     - Available options for this flag include: `"admin"`, `“user”`, `“unknown”` . Any additionally provided input will be treated as `"unknown"`.
 
 ## User Stories
