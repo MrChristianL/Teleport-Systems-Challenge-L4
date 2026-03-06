@@ -183,18 +183,15 @@ func TestJobOutputCapture(t *testing.T) {
 
 	// Verify broker received output
 	ctx := context.Background()
-	var output []byte
-	err := job.StreamFromDisk(ctx, func(data []byte) error {
-		output = append(output, data...)
-		return nil
-	})
+	var output bytes.Buffer
+	err := job.StreamFromDisk(ctx, &output)
 
 	if err != nil {
 		t.Fatalf("streamFromDisk() failed: %v", err)
 	}
 
-	if !bytes.Contains(output, []byte("hello world")) {
-		t.Errorf("output = %q, want to contain %q", output, "hello world")
+	if !bytes.Contains(output.Bytes(), []byte("hello world")) {
+		t.Errorf("output = %q, want to contain %q", output.Bytes(), "hello world")
 	}
 }
 
@@ -212,10 +209,9 @@ func TestConcurrentStreamers(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			ctx := context.Background()
-			job.StreamFromDisk(ctx, func(data []byte) error {
-				results[idx] = append(results[idx], data...)
-				return nil
-			})
+			buf := &bytes.Buffer{}
+			job.StreamFromDisk(ctx, buf)
+			results[idx] = buf.Bytes()
 		}(i)
 	}
 
@@ -240,9 +236,7 @@ func TestStreamCancellation(t *testing.T) {
 
 	streamDone := make(chan error, 1)
 	go func() {
-		streamDone <- job.StreamFromDisk(ctx, func(data []byte) error {
-			return nil
-		})
+		streamDone <- job.StreamFromDisk(ctx, &bytes.Buffer{})
 	}()
 
 	// Cancel after 100ms

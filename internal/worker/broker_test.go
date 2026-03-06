@@ -24,20 +24,14 @@ func TestLargeChunks(t *testing.T) {
 	broker.Write(largeData)
 	broker.close()
 
-	var got []byte
-	broker.streamFromDisk(context.Background(), func(chunk []byte) error {
-		got = append(got, chunk...)
-		return nil
-	})
+	var buf bytes.Buffer
+	broker.streamFromDisk(context.Background(), &buf)
 
-	if len(got) != len(largeData) {
-		t.Errorf("got %d bytes, want %d", len(got), len(largeData))
+	if buf.Len() != len(largeData) {
+		t.Errorf("got %d bytes, want %d", buf.Len(), len(largeData))
 	}
-	for i := range largeData {
-		if i >= len(got) || got[i] != largeData[i] {
-			t.Errorf("byte %d: got 0x%02X, want 0x%02X", i, got[i], largeData[i])
-			break
-		}
+	if !bytes.Equal(buf.Bytes(), largeData) {
+		t.Errorf("content mismatch")
 	}
 }
 
@@ -57,23 +51,15 @@ func TestBinaryData(t *testing.T) {
 	broker.Write(binaryData)
 	broker.close()
 
-	var got []byte
-	broker.streamFromDisk(context.Background(), func(chunk []byte) error {
-		got = append(got, chunk...)
-		return nil
-	})
+	var buf bytes.Buffer
+	broker.streamFromDisk(context.Background(), &buf)
 
-	if len(got) != len(binaryData) {
-		t.Errorf("got %d bytes, want %d", len(got), len(binaryData))
-	}
-	for i, b := range binaryData {
-		if i >= len(got) || got[i] != b {
-			t.Errorf("byte %d: got 0x%02X, want 0x%02X", i, got[i], b)
-		}
+	if !bytes.Equal(buf.Bytes(), binaryData) {
+		t.Errorf("got %x, want %x", buf.Bytes(), binaryData)
 	}
 }
 
-// TestClosedBroker verifies Writes to a closed broker do not get appended to log file
+// TestClosedBroker verifies Writes after close are handled correctly
 func TestClosedBroker(t *testing.T) {
 	broker, err := newBroker("test-job-6")
 	if err != nil {
@@ -83,19 +69,16 @@ func TestClosedBroker(t *testing.T) {
 	broker.Write([]byte("open"))
 	broker.close()
 
-	// Write after close — should be ignored
-	broker.Write([]byte("closed"))
+	// If you adopted the io.ErrClosedPipe suggestion, you could check for it here
+	_, err = broker.Write([]byte("closed"))
+	// if err != io.ErrClosedPipe { t.Error(...) }
 
-	// two late subscribers — both should get complete history only
 	collect := func() chan []byte {
 		ch := make(chan []byte, 1)
 		go func() {
-			var got []byte
-			broker.streamFromDisk(context.Background(), func(chunk []byte) error {
-				got = append(got, chunk...)
-				return nil
-			})
-			ch <- got
+			var buf bytes.Buffer
+			broker.streamFromDisk(context.Background(), &buf)
+			ch <- buf.Bytes()
 		}()
 		return ch
 	}
@@ -103,12 +86,12 @@ func TestClosedBroker(t *testing.T) {
 	ch1 := collect()
 	ch2 := collect()
 
-	want := "open"
-	if got := <-ch1; string(got) != want {
-		t.Errorf("client-1: got %q, want %q", string(got), want)
+	want := []byte("open")
+	if got := <-ch1; !bytes.Equal(got, want) {
+		t.Errorf("client-1: got %q, want %q", string(got), string(want))
 	}
-	if got := <-ch2; string(got) != want {
-		t.Errorf("client-2: got %q, want %q", string(got), want)
+	if got := <-ch2; !bytes.Equal(got, want) {
+		t.Errorf("client-2: got %q, want %q", string(got), string(want))
 	}
 }
 
@@ -127,24 +110,19 @@ func TestBrokerConcurrentStreaming(t *testing.T) {
 	wg.Add(numClients)
 	readyWg.Add(numClients)
 
-	// Start 10 concurrent clients
-	results := make([][]byte, numClients)
+	// Using a slice of buffers to capture output from each client
+	outputs := make([]bytes.Buffer, numClients)
+
 	for i := 0; i < numClients; i++ {
 		go func(clientID int) {
 			defer wg.Done()
-			readyWg.Done() // Signal ready
-
-			broker.streamFromDisk(context.Background(), func(chunk []byte) error {
-				results[clientID] = append(results[clientID], chunk...)
-				return nil
-			})
+			readyWg.Done()
+			broker.streamFromDisk(context.Background(), &outputs[clientID])
 		}(i)
 	}
 
-	// Wait for all clients to be ready
 	readyWg.Wait()
 
-	// Write data - should wake all clients via Broadcast
 	for i := 0; i < numWrites; i++ {
 		broker.Write([]byte(fmt.Sprintf("chunk-%d", i)))
 	}
@@ -153,10 +131,10 @@ func TestBrokerConcurrentStreaming(t *testing.T) {
 	wg.Wait()
 
 	// Verify all clients got same data
-	expected := string(results[0])
+	expected := outputs[0].Bytes()
 	for i := 1; i < numClients; i++ {
-		if string(results[i]) != expected {
-			t.Errorf("client %d got different data than client 0", i)
+		if !bytes.Equal(outputs[i].Bytes(), expected) {
+			t.Errorf("client %d got different data", i)
 		}
 	}
 }
@@ -168,40 +146,30 @@ func TestNoLostWakeup(t *testing.T) {
 		t.Fatalf("failed to create broker: %v", err)
 	}
 
-	// Write initial data
 	broker.Write([]byte("initial"))
 
-	// Start reader that will hit EOF
 	readerStarted := make(chan struct{})
 	readerDone := make(chan []byte, 1)
 
 	go func() {
-		var got []byte
+		var buf bytes.Buffer
 		close(readerStarted)
-		broker.streamFromDisk(context.Background(), func(chunk []byte) error {
-			got = append(got, chunk...)
-			return nil
-		})
-		readerDone <- got
+		broker.streamFromDisk(context.Background(), &buf)
+		readerDone <- buf.Bytes()
 	}()
 
-	// Wait for reader to start
 	<-readerStarted
-
-	// small delay to let reader hit EOF (required for this race test)
 	time.Sleep(10 * time.Millisecond)
 
-	// Write more data - this tests the race window
 	broker.Write([]byte("racing"))
 	broker.Write([]byte("data"))
-
 	broker.close()
 
 	got := <-readerDone
 
-	if !bytes.Contains(got, []byte("initial")) ||
-		!bytes.Contains(got, []byte("racing")) ||
-		!bytes.Contains(got, []byte("data")) {
-		t.Errorf("got %q, missing some writes (potential lost wakeup)", got)
+	for _, want := range []string{"initial", "racing", "data"} {
+		if !bytes.Contains(got, []byte(want)) {
+			t.Errorf("got %q, missing %q (potential lost wakeup)", string(got), want)
+		}
 	}
 }

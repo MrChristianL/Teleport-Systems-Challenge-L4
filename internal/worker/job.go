@@ -8,6 +8,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
 	"sync"
 )
@@ -140,8 +141,8 @@ func (j *Job) ExitCode() int {
 }
 
 // Streams complete output via the provided handler, blocks until the job finishes or ctx is cancelled. Supports concurrent calls.
-func (j *Job) StreamFromDisk(ctx context.Context, handler func([]byte) error) error {
-	return j.broker.streamFromDisk(ctx, handler)
+func (j *Job) StreamFromDisk(ctx context.Context, out io.Writer) error {
+	return j.broker.streamFromDisk(ctx, out)
 }
 
 func (j *Job) watchForFinish() {
