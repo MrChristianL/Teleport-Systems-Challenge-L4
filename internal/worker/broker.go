@@ -60,9 +60,8 @@ func (b *broker) Write(data []byte) (bytesWritten int, err error) {
 		return 0, io.ErrClosedPipe
 	}
 
-	// Write to the underlying file. We rely on POSIX semantics to ensure that
-	// once this returns, the data is immediately observable by readers
-	// via the kernel page cache.// commit data to log, store bytes written
+	// Commit data to log, store bytes written.
+	// POSIX guarantees data written will be available to readers via the kernel page cache.
 	bytesWritten, err = b.file.Write(data)
 	if err != nil {
 		return bytesWritten, fmt.Errorf("failed to write to log file: %w", err)
@@ -94,70 +93,7 @@ func (b *broker) close() {
 	b.cond.Broadcast()
 }
 
-// func (b *broker) streamFromDisk(ctx context.Context, handler func([]byte) error) error {
-// 	f, err := os.Open(b.filePath)
-// 	if err != nil {
-// 		return fmt.Errorf("failed to open log file: %w", err)
-// 	}
-
-// 	defer f.Close()
-
-// 	// Watchdog to ensure readers do not indefinitely hang on cancelation
-// 	go func() {
-// 		select {
-// 		case <-ctx.Done(): // user disconnects
-// 		case <-b.done: // server-side completion (e.g. broker closed, job finished)
-// 			return
-// 		}
-
-// 		b.mu.Lock()
-// 		b.cond.Broadcast()
-// 		b.mu.Unlock()
-// 	}()
-
-// 	buf := make([]byte, chunkReadSize) // 32 KiB read buffer
-// 	var offset int64
-
-// 	for {
-// 		bytesRead, err := f.Read(buf)
-// 		if bytesRead > 0 {
-// 			offset += int64(bytesRead)
-// 			if herr := handler(buf[:bytesRead]); herr != nil {
-// 				return herr
-// 			}
-// 		}
-
-// 		if err != nil {
-// 			if err != io.EOF {
-// 				return fmt.Errorf("failed to read log file: %w", err)
-// 			}
-
-// 			// Caught up to write head, reader waits
-// 			b.mu.Lock()
-
-// 			// Read all currently available data, but broker isn't closed - wait
-// 			for !b.closed && b.totalWritten == offset {
-// 				if ctx.Err() != nil {
-// 					b.mu.Unlock()
-// 					return ctx.Err()
-// 				}
-// 				b.cond.Wait()
-// 			}
-// 			closed := b.closed
-// 			b.mu.Unlock()
-
-// 			// Read all data and broker closed, so no new data to be read - exit
-// 			if closed && b.totalWritten == offset {
-// 				return nil
-// 			}
-
-// 			// loop back and read again
-// 			continue
-// 		}
-// 	}
-// }
-
-// streamFromDisk tails the log file from the beginning and writes chunks to 'out'.
+// streamFromDisk tails the log file from the beginning and writes to 'out'.
 // It blocks and waits for new data until the context is canceled or the broker is closed.
 func (b *broker) streamFromDisk(ctx context.Context, out io.Writer) error {
 	f, err := os.Open(b.filePath)
@@ -166,9 +102,7 @@ func (b *broker) streamFromDisk(ctx context.Context, out io.Writer) error {
 	}
 	defer f.Close()
 
-	// Watchdog goroutine to bridge context cancellation to sync.Cond.
-	// Since cond.Wait() isn't context-aware, we broadcast to wake up
-	// this reader if the client disconnects, preventing a goroutine leak.
+	// Watchdog to ensure readers do not indefinitely hang on cancelation
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -180,7 +114,7 @@ func (b *broker) streamFromDisk(ctx context.Context, out io.Writer) error {
 		b.mu.Unlock()
 	}()
 
-	buf := make([]byte, chunkReadSize)
+	buf := make([]byte, chunkReadSize) // 32 KiB read buffer
 	var offset int64
 
 	for {
@@ -191,7 +125,6 @@ func (b *broker) streamFromDisk(ctx context.Context, out io.Writer) error {
 
 		bytesRead, err := f.Read(buf)
 		if bytesRead > 0 {
-			// Write to the provided io.Writer (e.g., a gRPC stream).
 			if _, werr := out.Write(buf[:bytesRead]); werr != nil {
 				return werr
 			}
@@ -203,12 +136,10 @@ func (b *broker) streamFromDisk(ctx context.Context, out io.Writer) error {
 				return fmt.Errorf("failed to read log file: %w", err)
 			}
 
-			// We hit EOF, meaning we've consumed all data currently in the kernel page cache.
 			b.mu.Lock()
 
-			// The 'Wait Loop': Re-check the condition to handle spurious wakeups.
-			// We only park the goroutine if the broker is still open and we are
-			// mathematically caught up to the writer's offset.
+			// Wait loop:
+			// if broker is not closed, but we have read all available content
 			for !b.closed && b.totalWritten == offset {
 				if ctx.Err() != nil {
 					b.mu.Unlock()
@@ -221,7 +152,7 @@ func (b *broker) streamFromDisk(ctx context.Context, out io.Writer) error {
 			finalWritten := b.totalWritten
 			b.mu.Unlock()
 
-			// Terminal Condition: Broker is closed and all data has been read.
+			// if broker is closed and all data has been read, exit
 			if isClosed && finalWritten == offset {
 				return nil
 			}

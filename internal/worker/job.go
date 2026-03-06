@@ -104,7 +104,7 @@ func (j *Job) Start() error {
 	return nil
 }
 
-// Stop terminates a job via SIGKILL, blocking until process exits and then marking it as Stopped
+// Stop terminates a job via SIGKILL, blocking until process exits and then marking the job as Stopped
 func (j *Job) Stop() error {
 	j.mu.Lock()
 	if j.status != Running {
@@ -145,7 +145,8 @@ func (j *Job) ExitCode() int {
 	return j.exitCode
 }
 
-// Streams complete output via the provided handler, blocks until the job finishes or ctx is cancelled. Supports concurrent calls.
+// Streams complete output via Writer.
+// Blocks until the job finishes or ctx is cancelled and supports concurrent calls.
 func (j *Job) StreamFromDisk(ctx context.Context, out io.Writer) error {
 	return j.broker.streamFromDisk(ctx, out)
 }

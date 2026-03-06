@@ -28,6 +28,7 @@ const (
 	GetStatusResponse_RUNNING  GetStatusResponse_Status = 1
 	GetStatusResponse_FINISHED GetStatusResponse_Status = 2 // job completed
 	GetStatusResponse_FAILED   GetStatusResponse_Status = 3 // job failed or manually stopped
+	GetStatusResponse_STOPPED  GetStatusResponse_Status = 4 // job stopped by user
 )
 
 // Enum value maps for GetStatusResponse_Status.
@@ -37,12 +38,14 @@ var (
 		1: "RUNNING",
 		2: "FINISHED",
 		3: "FAILED",
+		4: "STOPPED",
 	}
 	GetStatusResponse_Status_value = map[string]int32{
 		"UNKNOWN":  0,
 		"RUNNING":  1,
 		"FINISHED": 2,
 		"FAILED":   3,
+		"STOPPED":  4,
 	}
 )
 
@@ -468,17 +471,18 @@ const file_jobctl_proto_rawDesc = "" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\")\n" +
 	"\x10GetStatusRequest\x12\x15\n" +
-	"\x06job_id\x18\x01 \x01(\tR\x05jobId\"\xc2\x01\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\"\xcf\x01\n" +
 	"\x11GetStatusResponse\x128\n" +
 	"\x06status\x18\x01 \x01(\x0e2 .jobctl.GetStatusResponse.StatusR\x06status\x12\x1b\n" +
 	"\texit_code\x18\x02 \x01(\x05R\bexitCode\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\tR\amessage\"<\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"I\n" +
 	"\x06Status\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\v\n" +
 	"\aRUNNING\x10\x01\x12\f\n" +
 	"\bFINISHED\x10\x02\x12\n" +
 	"\n" +
-	"\x06FAILED\x10\x03\",\n" +
+	"\x06FAILED\x10\x03\x12\v\n" +
+	"\aSTOPPED\x10\x04\",\n" +
 	"\x13StreamOutputRequest\x12\x15\n" +
 	"\x06job_id\x18\x01 \x01(\tR\x05jobId\",\n" +
 	"\x14StreamOutputResponse\x12\x14\n" +
