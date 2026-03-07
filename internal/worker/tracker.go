@@ -95,6 +95,8 @@ Some options include:
 For now, jobs persist until the server restarts and /tmp is cleaned up. This allows clients to view the
 status and output of jobs, even after finishing.
 
+---
+
 TODO:
 For production, consider using UUID/ULID for generating IDs for jobs. These approaches would provide support for
 a more high throughput service. However, any  implementation would require some consideration as to how the CLI

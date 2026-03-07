@@ -125,7 +125,7 @@ func TestJobExitCodes(t *testing.T) {
 
 // TestMultipleStops verifies that repeated stop calls succeed, as the desired state has already been met
 func TestMultipleStops(t *testing.T) {
-	job, err := newJob("job-8", []string{"sleep", "100"})
+	job, err := newJob("job-7", []string{"sleep", "100"})
 	if err != nil {
 		t.Fatalf("new job failed: %v", err)
 	}

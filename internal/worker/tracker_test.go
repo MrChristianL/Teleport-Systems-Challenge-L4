@@ -14,18 +14,15 @@ import (
 func TestTrackerJobLifecycle(t *testing.T) {
 	tracker := NewTracker()
 
-	// add job to tracker
 	job, err := tracker.AddJob([]string{"sleep", "3"})
 	if err != nil {
 		t.Fatalf("new job failed: %v", err)
 	}
 
-	// job should have been generated an ID
 	if len(job.ID) != 10 {
 		t.Errorf("job ID should be of format 'job-XXXXXX', got %q", job.ID)
 	}
 
-	// get job
 	jobGet, err := tracker.GetJob(job.ID)
 	if err != nil {
 		t.Errorf("tracker failed to get job %q: %v", job.ID, err)
@@ -52,9 +49,9 @@ func TestConcurrentAddJob(t *testing.T) {
 
 	var mu sync.Mutex // protects IDs map
 	IDs := make(map[string]bool)
+
 	var wg sync.WaitGroup
 
-	// add 50 jobs
 	for i := 0; i < 50; i++ {
 		wg.Add(1)
 		go func(index int) {
@@ -76,7 +73,6 @@ func TestConcurrentAddJob(t *testing.T) {
 		t.Errorf("expected 50 unique IDs, got %d", len(IDs))
 	}
 
-	// verify all IDs are actually unique
 	seen := make(map[string]bool)
 	for id := range IDs {
 		if seen[id] {
