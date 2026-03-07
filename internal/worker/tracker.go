@@ -25,7 +25,7 @@ func NewTracker() *Tracker {
 	}
 }
 
-// genJobID generates a unique ID. Must be called with t.mu held
+// genJobID generates a unique ID. Must be called with t.mu held, as done in AddJob
 func (t *Tracker) genJobID() (string, error) {
 	const charset = "0123456789abcdefghijklmnopqrstuvwxyz"
 	const length = 6

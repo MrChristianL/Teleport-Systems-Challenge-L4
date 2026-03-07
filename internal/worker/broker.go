@@ -79,14 +79,14 @@ func (b *broker) close() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// already closed
+	// if broker is already closed
 	if b.closed {
 		return
 	}
 
 	b.closed = true
-	b.file.Close()
-	close(b.done)
+	b.file.Close() //closes the log file
+	close(b.done)  // b.done signals to readers that no more output will be committed
 
 	// When the broker is closed, readers are woken up one last time
 	// to read what data they may have left to take in, then exit

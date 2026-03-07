@@ -54,6 +54,7 @@ func TestConcurrentAddJob(t *testing.T) {
 	IDs := make(map[string]bool)
 	var wg sync.WaitGroup
 
+	// add 50 jobs
 	for i := 0; i < 50; i++ {
 		wg.Add(1)
 		go func(index int) {

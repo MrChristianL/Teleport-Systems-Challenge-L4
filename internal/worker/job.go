@@ -60,7 +60,7 @@ func newJob(id string, command []string) (*Job, error) {
 		return nil, fmt.Errorf("command cannot be empty")
 	}
 
-	broker, err := newBroker(id)
+	broker, err := newBroker(id) // initialize the job's internal broker
 	if err != nil {
 		return nil, fmt.Errorf("failed to create broker: %w", err)
 	}

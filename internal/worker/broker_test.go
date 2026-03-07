@@ -69,9 +69,7 @@ func TestClosedBroker(t *testing.T) {
 	broker.Write([]byte("open"))
 	broker.close()
 
-	// If you adopted the io.ErrClosedPipe suggestion, you could check for it here
 	_, err = broker.Write([]byte("closed"))
-	// if err != io.ErrClosedPipe { t.Error(...) }
 
 	collect := func() chan []byte {
 		ch := make(chan []byte, 1)
