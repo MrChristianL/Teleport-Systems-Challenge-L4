@@ -1,0 +1,59 @@
+syntax = "proto3";
+package jobctl;
+option go_package = "jobctl/grpc";
+
+service JobService {
+    rpc StartJob(StartJobRequest) returns (StartJobResponse);
+    rpc StopJob(StopJobRequest) returns (StopJobResponse);
+    rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+    
+    rpc StreamOutput(StreamOutputRequest) returns (stream StreamOutputResponse);
+}
+
+
+// -- StartJob
+message StartJobRequest {
+    repeated string command = 1; // ["sleep", "5"]
+}
+
+message StartJobResponse {
+    string job_id = 1;
+}
+
+// -- StopJob
+message StopJobRequest {
+    string job_id = 1;
+}
+
+message StopJobResponse {
+    bool success = 1;
+    string message = 2; // "job stopped" or "job not found"
+}
+
+// -- Get Status
+message GetStatusRequest {
+    string job_id = 1;
+}
+
+message GetStatusResponse {
+    enum Status {
+        UNKNOWN = 0;
+        RUNNING = 1;
+        FINISHED = 2; // job completed
+        FAILED = 3; // job exited with non-zero exit code
+        STOPPED = 4; // job stopped by user
+    }
+
+    Status status = 1;    
+    int32 exit_code = 2; 
+    string message = 3;
+}
+
+// -- Stream Output
+message StreamOutputRequest {
+    string job_id = 1;
+}
+
+message StreamOutputResponse {
+    bytes chunk = 1; // Raw output chunk
+}
