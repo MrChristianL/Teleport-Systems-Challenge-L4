@@ -1,4 +1,3 @@
-BINARIES := bin/linux/jobctl bin/linux/server
 .DEFAULT_GOAL := help
 
 .PHONY: help
