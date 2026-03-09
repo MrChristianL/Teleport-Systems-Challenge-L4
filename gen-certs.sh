@@ -10,16 +10,15 @@ export MSYS_NO_PATHCONV=1
 mkdir -p certs
 
 # Generate CA private key and certificate
-openssl req -x509 -newkey rsa:4096 -days 365 -nodes \
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -days 365 -nodes \
   -keyout certs/ca-key.pem -out certs/ca-cert.pem \
   -subj "/C=US/ST=State/L=City/O=Organization/OU=CA/CN=ca.example.com"
 
 # Create config file for server certificate with SAN
 cat > certs/server-ext.cnf << 'EOF'
 [req]
-default_bits = 4096
 prompt = no
-default_md = sha384
+default_md = sha256
 req_extensions = req_ext
 distinguished_name = dn
 
@@ -42,7 +41,7 @@ IP.2 = ::1
 EOF
 
 # Generate server private key and certificate signing request
-openssl req -newkey rsa:4096 -nodes \
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
   -keyout certs/server-key.pem -out certs/server-req.pem \
   -config certs/server-ext.cnf
 
@@ -55,9 +54,8 @@ openssl x509 -req -in certs/server-req.pem -days 365 \
 # Create config file for USER client certificate with SAN
 cat > certs/user-ext.cnf << 'EOF'
 [req]
-default_bits = 4096
 prompt = no
-default_md = sha384
+default_md = sha256
 req_extensions = req_ext
 distinguished_name = dn
 
@@ -77,7 +75,7 @@ DNS.1 = user.example.com
 EOF
 
 # Generate USER client private key and certificate signing request
-openssl req -newkey rsa:4096 -nodes \
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
   -keyout certs/user-key.pem -out certs/user-req.pem \
   -config certs/user-ext.cnf
 
@@ -90,9 +88,8 @@ openssl x509 -req -in certs/user-req.pem -days 365 \
 # Create config file for ADMIN client certificate with SAN
 cat > certs/admin-ext.cnf << 'EOF'
 [req]
-default_bits = 4096
 prompt = no
-default_md = sha384
+default_md = sha256
 req_extensions = req_ext
 distinguished_name = dn
 
@@ -112,7 +109,7 @@ DNS.1 = admin.example.com
 EOF
 
 # Generate Admin client private key and certificate signing request
-openssl req -newkey rsa:4096 -nodes \
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
   -keyout certs/admin-key.pem -out certs/admin-req.pem \
   -config certs/admin-ext.cnf
 
@@ -125,9 +122,8 @@ openssl x509 -req -in certs/admin-req.pem -days 365 \
 # Create config file for UNKNOWN client certificate with SAN
 cat > certs/unknown-ext.cnf << 'EOF'
 [req]
-default_bits = 4096
 prompt = no
-default_md = sha384
+default_md = sha256
 req_extensions = req_ext
 distinguished_name = dn
 
@@ -147,7 +143,7 @@ DNS.1 = unknown.example.com
 EOF
 
 # Generate Unknown client private key and certificate signing request
-openssl req -newkey rsa:4096 -nodes \
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
   -keyout certs/unknown-key.pem -out certs/unknown-req.pem \
   -config certs/unknown-ext.cnf
 

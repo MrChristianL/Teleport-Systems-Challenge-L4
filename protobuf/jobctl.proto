@@ -1,10 +1,6 @@
 syntax = "proto3";
 package jobctl;
-<<<<<<< HEAD
 option go_package = "github.com/mrchristianl/teleport-systems-challenge-l4/protobuf/v1";
-=======
-option go_package = "jobctl/grpc";
->>>>>>> master
 
 service JobService {
     rpc StartJob(StartJobRequest) returns (StartJobResponse);

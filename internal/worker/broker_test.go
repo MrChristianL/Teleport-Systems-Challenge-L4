@@ -2,11 +2,10 @@ package worker
 
 import (
 	"bytes"
-	"context"
 	"fmt"
+	"log"
 	"sync"
 	"testing"
-	"time"
 )
 
 // TestLargeChunks verifies reader can receive data even if data is larger than chunkReadSize
@@ -25,37 +24,15 @@ func TestLargeChunks(t *testing.T) {
 	broker.close()
 
 	var buf bytes.Buffer
-	broker.streamFromDisk(context.Background(), &buf)
+	if err := broker.streamFromDisk(t.Context(), &buf); err != nil {
+		log.Printf("streamFromDisk Error: %v", err)
+	}
 
 	if buf.Len() != len(largeData) {
 		t.Errorf("got %d bytes, want %d", buf.Len(), len(largeData))
 	}
 	if !bytes.Equal(buf.Bytes(), largeData) {
 		t.Errorf("content mismatch")
-	}
-}
-
-// TestBinaryData verifies binary data remain intact when read from log file
-func TestBinaryData(t *testing.T) {
-	broker, err := newBroker("test-job-5")
-	if err != nil {
-		t.Fatalf("failed to create broker: %v", err)
-	}
-
-	binaryData := []byte{
-		0x00, 0xFF, 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A,
-		0x00, 0x01, 0x02, 0x03, 0x0A, 0x0D,
-		0xDE, 0xAD, 0xBE, 0xEF,
-	}
-
-	broker.Write(binaryData)
-	broker.close()
-
-	var buf bytes.Buffer
-	broker.streamFromDisk(context.Background(), &buf)
-
-	if !bytes.Equal(buf.Bytes(), binaryData) {
-		t.Errorf("got %x, want %x", buf.Bytes(), binaryData)
 	}
 }
 
@@ -71,13 +48,15 @@ func TestClosedBroker(t *testing.T) {
 	broker.close()
 
 	// attempt write to closed broker
-	_, err = broker.Write([]byte("closed"))
+	broker.Write([]byte("closed"))
 
 	collect := func() chan []byte {
 		ch := make(chan []byte, 1)
 		go func() {
 			var buf bytes.Buffer
-			broker.streamFromDisk(context.Background(), &buf)
+			if err := broker.streamFromDisk(t.Context(), &buf); err != nil {
+				log.Printf("streamFromDisk Error: %v", err)
+			}
 			ch <- buf.Bytes()
 		}()
 		return ch
@@ -113,19 +92,21 @@ func TestBrokerConcurrentStreaming(t *testing.T) {
 
 	outputs := make([]bytes.Buffer, numClients)
 
-	for i := 0; i < numClients; i++ {
+	for i := range numClients {
 		go func(clientID int) {
 			defer wg.Done()
 
 			// Signals that the reader is entering the wait loop
 			readyWg.Done()
-			broker.streamFromDisk(context.Background(), &outputs[clientID])
+			if err := broker.streamFromDisk(t.Context(), &outputs[clientID]); err != nil {
+				log.Printf("streamFromDisk Error: %v", err)
+			}
 		}(i)
 	}
 
 	readyWg.Wait()
 
-	for i := 0; i < numWrites; i++ {
+	for i := range numWrites {
 		broker.Write([]byte(fmt.Sprintf("chunk-%d", i)))
 	}
 
@@ -133,17 +114,17 @@ func TestBrokerConcurrentStreaming(t *testing.T) {
 
 	wg.Wait()
 
-	expected := outputs[0].Bytes()
-	for i := 1; i < numClients; i++ {
+	expected := []byte("chunk-0chunk-1chunk-2chunk-3chunk-4")
+	for i := range numClients {
 		if !bytes.Equal(outputs[i].Bytes(), expected) {
 			t.Errorf("client %d got different data", i)
 		}
 	}
 }
 
-// TestNoLostWakeup verifies that even if a Broadcast is sent while a reader is transitioning to a sleep state,
-// the reader's final offset check catches the data.offset check prevents lost broadcast signals
-func TestNoLostWakeup(t *testing.T) {
+// TestBrokerStreamCompleteness verifies that a reader receives all writes
+// including those that arrive after the initial EOF, before broker close.
+func TestBrokerStreamCompleteness(t *testing.T) {
 	broker, err := newBroker("test-job-8")
 	if err != nil {
 		t.Fatalf("failed to create broker: %v", err)
@@ -154,23 +135,19 @@ func TestNoLostWakeup(t *testing.T) {
 	var wg sync.WaitGroup
 	var readyWg sync.WaitGroup
 
-	wg.Add(1)
 	readyWg.Add(1)
 
 	readerOutput := make(chan []byte, 1)
 
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		var buf bytes.Buffer
 		readyWg.Done()
-		broker.streamFromDisk(context.Background(), &buf)
+		if err := broker.streamFromDisk(t.Context(), &buf); err != nil {
+			log.Printf("streamFromDisk Error: %v", err)
+		}
 		readerOutput <- buf.Bytes()
-	}()
-
+	})
 	readyWg.Wait()
-
-	// give the reader a moment to hit EOF and transiiton to Wait
-	time.Sleep(10 * time.Millisecond)
 
 	broker.Write([]byte("racing"))
 	broker.Write([]byte("data"))

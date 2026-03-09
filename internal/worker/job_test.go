@@ -39,13 +39,16 @@ func TestNewJob(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			job, err := newJob(test.id, test.cmd)
-			if (err != nil) != test.wantErr {
-				t.Errorf("newJob() error = %v, wantErr %v", err, test.wantErr)
+			if test.wantErr {
+				if err == nil {
+					t.Errorf("newJob() error = %v, wantErr %v", err, test.wantErr)
+				}
+				return
 			}
-			if !test.wantErr && job == nil {
+			if job == nil {
 				t.Errorf("expected newJob() not to be nil, wantErr %v", test.wantErr)
 			}
-			if !test.wantErr && job.ID != test.id {
+			if job.ID != test.id {
 				t.Errorf("expected ID %q, got %q", test.id, job.ID)
 			}
 		})
@@ -139,15 +142,13 @@ func TestMultipleStops(t *testing.T) {
 		t.Fatalf("first Stop() failed: %v", err)
 	}
 
-	<-job.done
-
 	// second stop should succeed - intended state already met
 	if err := job.Stop(); err != nil {
 		t.Errorf("expected Stop() to succeed, got: %v", err)
 	}
 }
 
-// TestStopVsFinish verifies stopRequested flag differentiates user stops from natural exits
+// TestStopVsFinish Stop() differentiates stops requested by the user from natural exits
 func TestStopVsFinish(t *testing.T) {
 	// User stop
 	jobStopped, _ := newJob("job-stopped", []string{"sleep", "100"})
@@ -182,7 +183,7 @@ func TestJobOutputCapture(t *testing.T) {
 	<-job.done
 
 	// Verify broker received output
-	ctx := context.Background()
+	ctx := t.Context()
 	var output bytes.Buffer
 	err := job.StreamFromDisk(ctx, &output)
 
@@ -204,11 +205,11 @@ func TestConcurrentStreamers(t *testing.T) {
 	var wg sync.WaitGroup
 	results := make([][]byte, 3)
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			ctx := context.Background()
+			ctx := t.Context()
 			buf := &bytes.Buffer{}
 			job.StreamFromDisk(ctx, buf)
 			results[idx] = buf.Bytes()
@@ -219,7 +220,7 @@ func TestConcurrentStreamers(t *testing.T) {
 	wg.Wait()
 
 	// All readers should see same output
-	for i := 1; i < 3; i++ {
+	for i := range 3 {
 		if !bytes.Equal(results[0], results[i]) {
 			t.Errorf("reader %d output differs from reader 0", i)
 		}
@@ -232,15 +233,13 @@ func TestStreamCancellation(t *testing.T) {
 	job.Start()
 	defer job.Stop()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 
 	streamDone := make(chan error, 1)
 	go func() {
 		streamDone <- job.StreamFromDisk(ctx, &bytes.Buffer{})
 	}()
 
-	// Cancel after 100ms
-	time.Sleep(100 * time.Millisecond)
 	cancel()
 
 	// Stream should exit quickly
@@ -251,5 +250,37 @@ func TestStreamCancellation(t *testing.T) {
 		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("streamFromDisk() did not exit after context cancellation")
+	}
+}
+
+// TestConcurrentStop verifies that multiple concurrent stop calls succeed
+func TestConcurrentStop(t *testing.T) {
+	job, err := newJob("job-stop", []string{"sleep", "100"})
+	if err != nil {
+		t.Fatalf("new job failed: %v", err)
+	}
+
+	if err := job.Start(); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	const numStoppers = 5
+	wg.Add(numStoppers)
+
+	errs := make([]error, numStoppers)
+	for i := range numStoppers {
+		go func() {
+			defer wg.Done()
+			errs[i] = job.Stop()
+		}()
+	}
+
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("stopper %d got error: %v", i, err)
+		}
 	}
 }

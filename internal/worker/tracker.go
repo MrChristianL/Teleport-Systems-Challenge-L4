@@ -9,13 +9,14 @@ package worker
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"sync"
 )
 
 // Manages the lifecycle of all jobs on the server
 type Tracker struct {
-	mu   sync.RWMutex
+	mu   sync.Mutex
 	jobs map[string]*Job // jobID -> Job
 }
 
@@ -27,22 +28,9 @@ func NewTracker() *Tracker {
 
 // genJobID generates a unique ID. Must be called with t.mu held, as done in AddJob
 func (t *Tracker) genJobID() (string, error) {
-	const charset = "0123456789abcdefghijklmnopqrstuvwxyz"
-	const length = 6
-
 	for {
-		// generate ID core - randomly assign bytes
-		core := make([]byte, length)
-		if _, err := rand.Read(core); err != nil {
-			return "", fmt.Errorf("failed to generated Job ID core: %w", err)
-		}
-
-		// map random bytes to charset
-		for i := range core {
-			core[i] = charset[int(core[i])%len(charset)] // assign corresponding character to core
-		}
-
-		id := "job-" + string(core)
+		// This returns a string like "job-XXXXXX", truncated to 6 characters for UX
+		id := "job-" + rand.Text()[:6]
 
 		// check if newly generated ID is already assigned to a job.
 		// if no, return. if yes, loop continues and generates a new ID
@@ -59,13 +47,13 @@ func (t *Tracker) AddJob(command []string) (*Job, error) {
 
 	id, err := t.genJobID()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate Job ID: %w", err)
+		return nil, fmt.Errorf("generating Job ID: %w", err)
 	}
 
 	// create job instance
 	job, err := newJob(id, command)
 	if err != nil {
-		return nil, fmt.Errorf("[%s] failed to create new job: %w", id, err)
+		return nil, fmt.Errorf("[%s] creating new job: %w", id, err)
 	}
 
 	t.jobs[job.ID] = job // register job with tracker
@@ -74,12 +62,12 @@ func (t *Tracker) AddJob(command []string) (*Job, error) {
 
 // Returns a job given that job's ID
 func (t *Tracker) GetJob(jobID string) (*Job, error) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	job, ok := t.jobs[jobID]
 	if !ok {
-		return nil, fmt.Errorf("job not found")
+		return nil, errors.New("job not found")
 	}
 
 	return job, nil

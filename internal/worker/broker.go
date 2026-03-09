@@ -15,9 +15,11 @@ import (
 	"sync"
 )
 
+const chunkReadSize = 32 * 1024 // 32 KiB
+
 type broker struct {
 	mu   sync.Mutex
-	cond *sync.Cond // used for output streaming
+	cond *sync.Cond // used to broadcast new writes to open readers
 	done chan struct{}
 
 	file         *os.File
@@ -30,7 +32,7 @@ func newBroker(jobID string) (*broker, error) {
 	filePath := filepath.Join(os.TempDir(), fmt.Sprintf("jobctl-%s.log", jobID))
 	file, err := os.Create(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create output file: %w", err)
+		return nil, fmt.Errorf("creating output file: %w", err)
 	}
 
 	b := &broker{
@@ -64,7 +66,7 @@ func (b *broker) Write(data []byte) (bytesWritten int, err error) {
 	// POSIX guarantees data written will be available to readers via the kernel page cache.
 	bytesWritten, err = b.file.Write(data)
 	if err != nil {
-		return bytesWritten, fmt.Errorf("failed to write to log file: %w", err)
+		return bytesWritten, fmt.Errorf("writing to log file: %w", err)
 	}
 
 	// Increment totalWritten only after the write succeeds
@@ -98,7 +100,7 @@ func (b *broker) close() {
 func (b *broker) streamFromDisk(ctx context.Context, out io.Writer) error {
 	f, err := os.Open(b.filePath)
 	if err != nil {
-		return fmt.Errorf("failed to open log file: %w", err)
+		return fmt.Errorf("opening log file: %w", err)
 	}
 	defer f.Close()
 
@@ -114,7 +116,7 @@ func (b *broker) streamFromDisk(ctx context.Context, out io.Writer) error {
 		b.mu.Unlock()
 	}()
 
-	buf := make([]byte, chunkReadSize) // 32 KiB read buffer
+	// buf := make([]byte, chunkReadSize) // 32 KiB read buffer
 	var offset int64
 
 	for {
@@ -123,23 +125,19 @@ func (b *broker) streamFromDisk(ctx context.Context, out io.Writer) error {
 			return err
 		}
 
-		bytesRead, err := f.Read(buf)
-		if bytesRead > 0 {
-			if _, werr := out.Write(buf[:bytesRead]); werr != nil {
-				return werr
-			}
-			offset += int64(bytesRead)
-		}
+		bytesRead, err := io.Copy(out, f)
+		offset += bytesRead
 
 		if err != nil {
-			if err != io.EOF {
-				return fmt.Errorf("failed to read log file: %w", err)
-			}
+			return fmt.Errorf("reading log file: %w", err)
+		}
 
+		// io.Copy never returns io.EOF
+		// To enter wait loop, readers much check for no progress (bytesRead == 0) with (err == nil)
+		if bytesRead == 0 {
 			b.mu.Lock()
 
-			// Wait loop:
-			// if broker is not closed, but we have read all available content
+			// if broker is not closed, but we have read all avialable content, reader waits
 			for !b.closed && b.totalWritten == offset {
 				if ctx.Err() != nil {
 					b.mu.Unlock()
@@ -156,9 +154,6 @@ func (b *broker) streamFromDisk(ctx context.Context, out io.Writer) error {
 			if isClosed && finalWritten == offset {
 				return nil
 			}
-
-			// Otherwise, more data was written while we were locking/waiting; loop back.
-			continue
 		}
 	}
 }

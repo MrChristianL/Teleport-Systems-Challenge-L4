@@ -7,13 +7,12 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
 	"sync"
 )
-
-const chunkReadSize = 32 * 1024 // 32 KiB
 
 // Status represents the current state of a job
 type Status int
@@ -38,7 +37,7 @@ type Job struct {
 	cmd *exec.Cmd
 
 	// state management
-	mu         sync.RWMutex
+	mu         sync.Mutex
 	status     Status
 	exitCode   int
 	stopReason string
@@ -51,18 +50,24 @@ type Job struct {
 	onceDone sync.Once // to ensure cleanup occurs exactly once
 }
 
+type JobSnapshot struct {
+	Status     Status
+	ExitCode   int
+	StopReason string
+}
+
 func newJob(id string, command []string) (*Job, error) {
 	if id == "" {
-		return nil, fmt.Errorf("job ID cannot be empty")
+		return nil, errors.New("job ID cannot be empty")
 	}
 
 	if len(command) == 0 {
-		return nil, fmt.Errorf("command cannot be empty")
+		return nil, errors.New("command cannot be empty")
 	}
 
 	broker, err := newBroker(id) // initialize the job's internal broker
 	if err != nil {
-		return nil, fmt.Errorf("failed to create broker: %w", err)
+		return nil, fmt.Errorf("creating broker: %w", err)
 	}
 
 	return &Job{
@@ -78,7 +83,7 @@ func (j *Job) Start() error {
 	j.mu.Lock()
 	if j.cmd != nil {
 		j.mu.Unlock()
-		return fmt.Errorf("job has already started")
+		return errors.New("job has already started")
 	}
 	j.mu.Unlock()
 
@@ -89,13 +94,13 @@ func (j *Job) Start() error {
 	cmd.Stderr = j.broker
 
 	// start job (non-blocking)
+	// cmd.Start() is considered potentially slow, so the lock is not held to avoid risking holding up other processes
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("[%s] failed to start job: %w", j.ID, err)
+		return fmt.Errorf("starting job: %w", err)
 	}
 
 	j.mu.Lock()
 	j.cmd = cmd
-	j.status = Running // update status after starting job
 	j.mu.Unlock()
 
 	// start monitoring job for completion
@@ -109,45 +114,61 @@ func (j *Job) Stop() error {
 	j.mu.Lock()
 	if j.status != Running {
 		j.mu.Unlock()
-		// job already stopped, desired state achieved
 		return nil
 	}
 	process := j.cmd.Process
-	j.mu.Unlock()
-
-	process.Kill()
-	<-j.done // wait for watchForFinish() to complete before returning
-
-	// Now set the state that Stop() caused
-	j.mu.Lock()
 	j.status = Stopped
 	j.stopReason = "stopped by user"
 	j.mu.Unlock()
 
+	process.Kill()
+	<-j.done
 	return nil
 }
 
 func (j *Job) StopReason() string {
-	j.mu.RLock()
-	defer j.mu.RUnlock()
+	j.mu.Lock()
+	defer j.mu.Unlock()
 	return j.stopReason
 }
 
 func (j *Job) Status() Status {
-	j.mu.RLock()
-	defer j.mu.RUnlock()
+	j.mu.Lock()
+	defer j.mu.Unlock()
 	return j.status
 }
 
 func (j *Job) ExitCode() int {
-	j.mu.RLock()
-	defer j.mu.RUnlock()
+	j.mu.Lock()
+	defer j.mu.Unlock()
 	return j.exitCode
+}
+
+// Snapshot provides access to multiple job traits all at once rather than forcing users to poll each individually.
+// This eliminates data races where the traits may not align with one another (e.g. status and exit code don't sync up)
+func (j *Job) Snapshot() JobSnapshot {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return JobSnapshot{
+		Status:     j.status,
+		ExitCode:   j.exitCode,
+		StopReason: j.stopReason,
+	}
 }
 
 // Streams complete output via Writer.
 // Blocks until the job finishes or ctx is cancelled and supports concurrent calls.
 func (j *Job) StreamFromDisk(ctx context.Context, out io.Writer) error {
+	j.mu.Lock()
+	b := j.broker
+	j.mu.Unlock()
+
+	if b == nil {
+		return errors.New("broker not initialized")
+	}
+
+	// No lock needed while streaming because streaming blocks and would keep other readers
+	// from streaming, waiting for the lock
 	return j.broker.streamFromDisk(ctx, out)
 }
 
@@ -159,12 +180,14 @@ func (j *Job) watchForFinish() {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
+	// close broker (signals readers to stop waiting) and done channel (signals Stop() to return)
+	defer j.onceDone.Do(func() {
+		j.broker.close()
+		close(j.done)
+	})
+
 	// Only update if still running (Stop() hasn't already handled it)
 	if j.status != Running {
-		j.onceDone.Do(func() {
-			j.broker.close()
-			close(j.done)
-		})
 		return
 	}
 
@@ -185,9 +208,4 @@ func (j *Job) watchForFinish() {
 		j.stopReason = "job completed successfully"
 	}
 
-	// close broker (signals readers to stop waiting) and done channel (signals Stop() to return)
-	j.onceDone.Do(func() {
-		j.broker.close()
-		close(j.done)
-	})
 }
