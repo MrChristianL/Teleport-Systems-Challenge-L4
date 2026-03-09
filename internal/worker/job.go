@@ -169,14 +169,23 @@ func (j *Job) StreamFromDisk(ctx context.Context, out io.Writer) error {
 
 	// No lock needed while streaming because streaming blocks and would keep other readers
 	// from streaming, waiting for the lock
-	return j.broker.streamFromDisk(ctx, out)
+	return b.streamFromDisk(ctx, out)
 }
 
 func (j *Job) watchForFinish() {
+	j.mu.Lock()
+	cmd := j.cmd
+	j.mu.Unlock()
+
+	if cmd == nil { // if cmd is empty, there is nothing to wait for
+		return
+	}
+
 	// blocks until the process exits and OS pipes are closed
 	// Wait() will only return once writer pipes are drained
-	err := j.cmd.Wait()
+	err := cmd.Wait()
 
+	// re-acquire the lock
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
@@ -186,7 +195,6 @@ func (j *Job) watchForFinish() {
 		close(j.done)
 	})
 
-	// Only update if still running (Stop() hasn't already handled it)
 	if j.status != Running {
 		return
 	}
