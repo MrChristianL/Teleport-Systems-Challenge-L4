@@ -62,7 +62,7 @@ func (c *Client) StreamOutput(ctx context.Context, jobID string, handler func(ch
 
 		// call handler with chunk
 		if err := handler(resp.Chunk); err != nil {
-			return fmt.Errorf("handler returned error: %v", err)
+			return fmt.Errorf("handler returned error: %w", err)
 		}
 	}
 }

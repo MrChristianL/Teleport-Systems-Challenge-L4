@@ -24,7 +24,7 @@ var stopCmd = &cobra.Command{
 		// Create client
 		c, err := client.NewClient(serverAddr, certFile, keyFile, caFile)
 		if err != nil {
-			return fmt.Errorf("failed to connect to server: %v", err)
+			return fmt.Errorf("connecting to server: %w", err)
 		}
 		defer c.Close()
 
@@ -34,7 +34,7 @@ var stopCmd = &cobra.Command{
 
 		success, message, err := c.StopJob(ctx, jobID)
 		if err != nil {
-			return fmt.Errorf("failed to stop job: %v", err)
+			return fmt.Errorf("StopJob: %w", err)
 		}
 
 		if !success {

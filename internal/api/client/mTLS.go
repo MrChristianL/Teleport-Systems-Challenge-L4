@@ -33,7 +33,7 @@ func ConfigureClientTLS(certFile string, keyFile string, caFile string) (credent
 	// Load client cert/key pair for client authentication
 	clientCert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
-		return nil, fmt.Errorf("loading client cert/key pair: %v", err)
+		return nil, fmt.Errorf("loading client cert/key pair: %w", err)
 	}
 
 	// Configure TLS

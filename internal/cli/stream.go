@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -40,7 +41,7 @@ Press Ctrl + C to stop streaming (job continues running)...`,
 				return fmt.Errorf("failed to read job ID from stdin: %v", err)
 			}
 			if jobID == "" {
-				return fmt.Errorf("no job ID provided")
+				return errors.New("no job ID provided")
 			}
 		}
 
@@ -51,7 +52,7 @@ Press Ctrl + C to stop streaming (job continues running)...`,
 		// Create client
 		c, err := client.NewClient(serverAddr, certFile, keyFile, caFile)
 		if err != nil {
-			return fmt.Errorf("failed to connect to server: %v", err)
+			return fmt.Errorf("connecting to server: %w", err)
 		}
 		defer c.Close()
 
@@ -66,7 +67,7 @@ Press Ctrl + C to stop streaming (job continues running)...`,
 		})
 
 		if err != nil {
-			return fmt.Errorf("error streaming output: %v", err)
+			return fmt.Errorf("streaming output: %w", err)
 		}
 		return nil
 	},

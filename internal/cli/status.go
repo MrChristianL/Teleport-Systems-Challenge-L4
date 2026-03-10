@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -50,7 +51,7 @@ var statusCmd = &cobra.Command{
 				jobID = strings.TrimSpace(scanner.Text())
 			}
 			if jobID == "" {
-				return fmt.Errorf("job ID not provided as argument or via stdin")
+				return errors.New("job ID not provided as argument or via stdin")
 			}
 		}
 
@@ -61,7 +62,7 @@ var statusCmd = &cobra.Command{
 		// Create client
 		c, err := client.NewClient(serverAddr, certFile, keyFile, caFile)
 		if err != nil {
-			return fmt.Errorf("failed to connect to server: %v", err)
+			return fmt.Errorf("connecting to server: %w", err)
 		}
 		defer c.Close()
 
@@ -71,7 +72,7 @@ var statusCmd = &cobra.Command{
 
 		status, exitCode, message, err := c.GetStatus(ctx, jobID)
 		if err != nil {
-			return fmt.Errorf("failed to get status: %v", err)
+			return fmt.Errorf("GetStatus: %w", err)
 		}
 
 		fmt.Printf("Job ID: %s\n", jobID)
