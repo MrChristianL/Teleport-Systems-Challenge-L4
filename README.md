@@ -59,7 +59,7 @@ Key scenarios tested:
 - Concurrent job creation
 
 ## API (Server)
-The gRPC server acts as the brige between the client and the Worker library. The gRPC server is also responsible for the security of the remote job execution server, utilizing RBAC authorization and mTLS authentication.
+The gRPC server acts as the bridge between the client and the Worker library. The gRPC server is also responsible for the security of the remote job execution server, utilizing RBAC authorization and mTLS authentication.
 
 ### Features
 - mTLS (TLS 1.3 enforced)
