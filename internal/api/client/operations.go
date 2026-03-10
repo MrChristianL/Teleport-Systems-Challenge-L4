@@ -29,7 +29,7 @@ func (c *Client) StopJob(ctx context.Context, jobID string) (success bool, messa
 	return resp.Success, resp.Message, nil
 }
 
-func (c *Client) GetStatus(ctx context.Context, jobID string) (status pb.GetStatusResponse_Status, exitCode int32, duration string, err error) {
+func (c *Client) GetStatus(ctx context.Context, jobID string) (status pb.GetStatusResponse_Status, exitCode int32, message string, err error) {
 	resp, err := c.client.GetStatus(ctx, &pb.GetStatusRequest{
 		JobId: jobID,
 	})
