@@ -33,17 +33,17 @@ func Execute() {
 // helper function that allows users to select cert levels (role) for running commands
 // DEFAULT: Admin user
 func certPathsForRole(cmd *cobra.Command) (certPath, keyFile, caFile string) {
-	cert, _ := cmd.Flags().GetString("cert")
+	// Get the base flag values
+	role, _ := cmd.Flags().GetString("role")
 	caFile, _ = cmd.Flags().GetString("ca")
-
-	// if cert/key were explicitly provided, use those
 	certPath, _ = cmd.Flags().GetString("cert")
 	keyFile, _ = cmd.Flags().GetString("key")
 
-	// if role was explicitly set, override cert/key
-	if cmd.Flags().Changed("role") {
-		certPath = fmt.Sprintf("certs/%s-cert.pem", cert)
-		keyFile = fmt.Sprintf("certs/%s-key.pem", cert)
+	// If the user ONLY provided --role, override the cert/key paths automatically
+	// But if they provided specific --cert or --key flags, respect those.
+	if cmd.Flags().Changed("role") && !cmd.Flags().Changed("cert") && !cmd.Flags().Changed("key") {
+		certPath = fmt.Sprintf("certs/%s-cert.pem", role)
+		keyFile = fmt.Sprintf("certs/%s-key.pem", role)
 	}
 
 	return certPath, keyFile, caFile
@@ -51,5 +51,13 @@ func certPathsForRole(cmd *cobra.Command) (certPath, keyFile, caFile string) {
 
 func init() {
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
+
+	// 1. Define the role
 	rootCmd.PersistentFlags().String("role", "admin", "Role to use (admin, user, unknown)")
+
+	// 2. Define the paths with sensible defaults
+	rootCmd.PersistentFlags().String("ca", "certs/ca-cert.pem", "Path to CA certificate")
+	rootCmd.PersistentFlags().String("cert", "certs/admin-cert.pem", "Path to client certificate")
+	rootCmd.PersistentFlags().String("key", "certs/admin-key.pem", "Path to client key")
+	rootCmd.PersistentFlags().String("server", "localhost:50051", "Server address")
 }
