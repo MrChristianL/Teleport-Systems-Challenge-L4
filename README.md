@@ -73,7 +73,7 @@ All tests pass with race detector enabled.
 Key scenarios tested:
 - RPCs are limited based on user role
 - TLS enforced
-- Context cancelation of streams, not jobs
+- Context cancellation of streams, not jobs
 - Streaming live and historical output
 
 ## API (Client)
