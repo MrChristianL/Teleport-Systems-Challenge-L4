@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -36,7 +37,7 @@ func Execute() {
 func certPathsForRole(cmd *cobra.Command) (certPath, keyFile, caFile string) {
 	certFlag, _ := cmd.Flags().GetString("cert")
 	caFile, _ = cmd.Flags().GetString("ca")
-	
+
 	// Check if user provided a convenience name (admin, user, unknown)
 	// or a full path
 	switch certFlag {
@@ -47,7 +48,7 @@ func certPathsForRole(cmd *cobra.Command) (certPath, keyFile, caFile string) {
 	default:
 		// Full path provided: --cert=certs/custom-cert.pem
 		certPath = certFlag
-		
+
 		// Try to infer key path by replacing -cert.pem with -key.pem
 		if strings.HasSuffix(certPath, "-cert.pem") {
 			keyFile = strings.Replace(certPath, "-cert.pem", "-key.pem", 1)
@@ -59,12 +60,12 @@ func certPathsForRole(cmd *cobra.Command) (certPath, keyFile, caFile string) {
 			keyFile, _ = cmd.Flags().GetString("key")
 		}
 	}
-	
+
 	// Allow explicit --key override
 	if cmd.Flags().Changed("key") {
 		keyFile, _ = cmd.Flags().GetString("key")
 	}
-	
+
 	return certPath, keyFile, caFile
 }
 
@@ -75,7 +76,7 @@ func init() {
 	rootCmd.PersistentFlags().String("cert", "admin", "Client certificate (admin, user, unknown, or path to cert file)")
 	rootCmd.PersistentFlags().String("key", "", "Path to client key (optional, auto-detected from --cert)")
 	rootCmd.PersistentFlags().String("ca", "certs/ca-cert.pem", "Path to CA certificate")
-	
+
 	// Server address
 	rootCmd.PersistentFlags().String("server", "localhost:50051", "Server address")
 }
