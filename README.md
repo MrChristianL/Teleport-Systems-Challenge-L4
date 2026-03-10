@@ -44,15 +44,11 @@ The Worker library provides process execution and output streaming primitives fo
 
 ### Testing
 
-<<<<<<< HEAD
 ```bash
 make test       # Run tests
 make test-race  # Run tests with race detector
 ```
 Test coverage: **87.9%**
-=======
-Test coverage: **87.6%**
->>>>>>> a1f1bb1 (updated README; removed rebase errors)
 All tests pass with race detector enabled.
 
 Key scenarios tested:
@@ -95,8 +91,3 @@ Key scenarios tested:
 - Non-existent job interactions
 - Client response to no server
 - Multi-client output streaming
-<<<<<<< HEAD
-=======
-
-Testing for the CLI doesn't exist as the CLI is simply a wrapper for the client, server, and worker library. The CLI does not present any additional logic to test at this time.
->>>>>>> a1f1bb1 (updated README; removed rebase errors)
