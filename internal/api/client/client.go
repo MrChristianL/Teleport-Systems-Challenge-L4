@@ -42,4 +42,4 @@ func (c *Client) Close() error {
 }
 
 // TODO: For production, add ServerName as a parameter for creating a new client
-// to support connections where the target address differs from the cert's DNS SANs
+// to support connections where the target address differs from the cert's DNS SAN
