@@ -46,3 +46,8 @@ func NewServer() error {
 	}
 	return nil
 }
+
+// this is a helper function be utilized for client testing
+func NewServerWithTracker(tracker *worker.Tracker) *server {
+	return &server{tracker: tracker}
+}
