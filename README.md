@@ -80,7 +80,6 @@ Key scenarios tested:
 The gRPC client is the entry point for the end-user's CLI tool. It manages the mTLS handshake, credential loading, and the lifecycle of long-lived gRPC streams, ensuring secure and resilient communication with the remote service.
 
 ### Features
-<<<<<<< HEAD
 - Client-side RPC operators
 - mTLS configuration (TLS 1.3 enforced)
 
