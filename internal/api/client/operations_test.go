@@ -1,7 +1,6 @@
 package client
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -16,18 +15,18 @@ func TestClientStartStopJob(t *testing.T) {
 	client, closeClient := newTestClient(t, addr, certPrefix)
 	defer closeClient()
 
-	respID, err := client.StartJob(context.Background(), []string{"sleep", "100"})
+	respID, err := client.StartJob(t.Context(), []string{"sleep", "100"})
 	if err != nil {
-		t.Fatalf("failed to StartJob: %v", err)
+		t.Fatalf("StartJob: %v", err)
 	}
 	if respID == "" {
 		t.Errorf("expected non-empty job ID, got empty")
 	}
 
-	stopResp, stopMsg, err := client.StopJob(context.Background(), respID)
+	stopResp, stopMsg, err := client.StopJob(t.Context(), respID)
 
 	if err != nil {
-		t.Fatalf("failed to StopJob: %v", err)
+		t.Fatalf("StopJob: %v", err)
 	}
 	if !stopResp {
 		t.Errorf("expected StopJob to succeed, got false %s: %v", certPrefix, err)
@@ -45,15 +44,15 @@ func TestClientGetStatus(t *testing.T) {
 	client, closeClient := newTestClient(t, addr, certPrefix)
 	defer closeClient()
 
-	respID, err := client.StartJob(context.Background(), []string{"echo", "test"})
+	respID, err := client.StartJob(t.Context(), []string{"echo", "test"})
 	if err != nil {
-		t.Fatalf("failed to StartJob: %v", err)
+		t.Fatalf("StartJob: %v", err)
 	}
 
 	// message doesn't exist for in-progress jobs; message is used as an explaination of exit code
-	status, exitCode, _, err := client.GetStatus(context.Background(), respID)
+	status, exitCode, _, err := client.GetStatus(t.Context(), respID)
 	if err != nil {
-		t.Fatalf("failed to GetStatus: %v", err)
+		t.Fatalf("GetStatus: %v", err)
 	}
 	if status == pb.GetStatusResponse_UNKNOWN {
 		t.Errorf("status expected to be FINISHED, got UNKNOWN")
@@ -70,22 +69,22 @@ func TestClientStreamOutput(t *testing.T) {
 	client, closeClient := newTestClient(t, addr, "admin")
 	defer closeClient()
 
-	respID, err := client.StartJob(context.Background(), []string{"echo", "test"})
+	respID, err := client.StartJob(t.Context(), []string{"echo", "test"})
 	if err != nil {
-		t.Fatalf("failed to StartJob: %v", err)
+		t.Fatalf("StartJob: %v", err)
 	}
 
 	var streamResp []byte
 	handlerCalled := false
 
-	err = client.StreamOutput(context.Background(), respID, func(chunk []byte) error {
+	err = client.StreamOutput(t.Context(), respID, func(chunk []byte) error {
 		handlerCalled = true
 		streamResp = append(streamResp, chunk...)
 		return nil
 	})
 
 	if err != nil {
-		t.Fatalf("failed to StreamOutput: %v", err)
+		t.Fatalf("StreamOutput: %v", err)
 	}
 
 	if !handlerCalled {
@@ -110,9 +109,9 @@ func TestMultipleClients(t *testing.T) {
 	unknown, closeUnknownClient := newTestClient(t, addr, "unknown")
 	defer closeUnknownClient()
 
-	respID, err := admin.StartJob(context.Background(), []string{"seq", "1", "1000"}) // long running job, subscribers will join in the middle
+	respID, err := admin.StartJob(t.Context(), []string{"seq", "1", "1000"}) // long running job, subscribers will join in the middle
 	if err != nil {
-		t.Fatalf("failed to StartJob: %v", err)
+		t.Fatalf("StartJob: %v", err)
 	}
 
 	// unknown receives no response as it is rejected immediately
@@ -120,15 +119,15 @@ func TestMultipleClients(t *testing.T) {
 	adminCh := make(chan []byte, 1)
 	userCh := make(chan []byte, 1)
 
-	if err = unknown.StreamOutput(context.Background(), respID, func(chunk []byte) error {
+	if err = unknown.StreamOutput(t.Context(), respID, func(chunk []byte) error {
 		return nil
 	}); err == nil {
-		t.Errorf("unknown StreamOutput should receive code PermissionDenied, got nil: %v", err)
+		t.Errorf("unknown StreamOutput should receive code Unauthorized, got nil: %v", err)
 	}
 
 	go func() {
 		var buffer []byte
-		admin.StreamOutput(context.Background(), respID, func(chunk []byte) error {
+		admin.StreamOutput(t.Context(), respID, func(chunk []byte) error {
 			buffer = append(buffer, chunk...)
 			return nil
 		})
@@ -137,7 +136,7 @@ func TestMultipleClients(t *testing.T) {
 
 	go func() {
 		var buffer []byte
-		user.StreamOutput(context.Background(), respID, func(chunk []byte) error {
+		user.StreamOutput(t.Context(), respID, func(chunk []byte) error {
 			buffer = append(buffer, chunk...)
 			return nil
 		})
@@ -165,9 +164,9 @@ func TestClientStopNonExistentJob(t *testing.T) {
 	defer closeClient()
 
 	jobID := "job-123abc"
-	success, message, err := client.StopJob(context.Background(), jobID)
+	success, message, err := client.StopJob(t.Context(), jobID)
 	if err != nil {
-		t.Fatalf("StopJob failed")
+		t.Fatalf("StopJob")
 	}
 
 	if success {
@@ -188,9 +187,9 @@ func TestClientGetStatusNonExistentJob(t *testing.T) {
 	defer closeClient()
 
 	jobID := "job-123abc"
-	status, exitCode, message, err := client.GetStatus(context.Background(), jobID)
+	status, exitCode, message, err := client.GetStatus(t.Context(), jobID)
 	if err != nil {
-		t.Fatalf("failed to GetStatus: %v", err)
+		t.Fatalf("GetStatus: %v", err)
 	}
 
 	if status != pb.GetStatusResponse_UNKNOWN {
@@ -218,7 +217,7 @@ func TestStreamNonExistentJob(t *testing.T) {
 	var handlerCalled bool
 	var streamResp []byte
 	var receivedEOF bool
-	err := client.StreamOutput(context.Background(), jobID, func(chunk []byte) error {
+	err := client.StreamOutput(t.Context(), jobID, func(chunk []byte) error {
 		handlerCalled = true
 		streamResp = append(streamResp, chunk...)
 		return nil
@@ -248,7 +247,7 @@ func TestClientStartEmptyCommand(t *testing.T) {
 	client, closeClient := newTestClient(t, addr, "admin")
 	defer closeClient()
 
-	respID, err := client.StartJob(context.Background(), []string{})
+	respID, err := client.StartJob(t.Context(), []string{})
 	if err == nil {
 		t.Fatalf("expected StartJob to fail, got: %v", err)
 	}
@@ -264,7 +263,7 @@ func TestClientNoServer(t *testing.T) {
 	client, closeClient := newTestClient(t, ipAddr, "admin")
 	defer closeClient()
 
-	_, err := client.StartJob(context.Background(), []string{"sleep", "1"})
+	_, err := client.StartJob(t.Context(), []string{"sleep", "1"})
 	if err == nil {
 		t.Fatalf("expected StartJob to fail, got %v", err)
 	}
@@ -277,16 +276,16 @@ func TestDuplicateStopJob(t *testing.T) {
 	client, closeClient := newTestClient(t, addr, "admin")
 	defer closeClient()
 
-	jobID, err := client.StartJob(context.Background(), []string{"sleep", "100"})
+	jobID, err := client.StartJob(t.Context(), []string{"sleep", "100"})
 	if err != nil {
-		t.Fatalf("failed to StartJob: %v", err)
+		t.Fatalf("StartJob: %v", err)
 	}
 
 	// first stop request
-	firstResp, firstMsg, err := client.StopJob(context.Background(), jobID)
+	firstResp, firstMsg, err := client.StopJob(t.Context(), jobID)
 
 	if err != nil {
-		t.Fatalf("failed to StopJob: %v", err)
+		t.Fatalf("StopJob: %v", err)
 	}
 	if !firstResp {
 		t.Errorf("expected StopJob to succeed, got false: %v", err)
@@ -296,10 +295,10 @@ func TestDuplicateStopJob(t *testing.T) {
 	}
 
 	// second stop request - should fail
-	secondResp, secondMsg, err := client.StopJob(context.Background(), jobID)
+	secondResp, secondMsg, err := client.StopJob(t.Context(), jobID)
 
 	if err != nil {
-		t.Fatalf("StopJob failed: %v", err)
+		t.Fatalf("StopJob : %v", err)
 	}
 	if !secondResp {
 		t.Errorf("expected duplicate StopJob to return true, got false: %v", err)

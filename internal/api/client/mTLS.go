@@ -9,6 +9,7 @@ package client
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"os"
 
@@ -20,19 +21,19 @@ func ConfigureClientTLS(certFile string, keyFile string, caFile string) (credent
 	// Load CA cert to verify server
 	caCert, err := os.ReadFile(caFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load CA certificate: %v", err)
+		return nil, fmt.Errorf("loading CA certificate: %w", err)
 	}
 
 	// Create cert pool that validates servers this client connects to
 	certPool := x509.NewCertPool()
 	if !certPool.AppendCertsFromPEM(caCert) {
-		return nil, fmt.Errorf("failed to add CA certificate to pool")
+		return nil, errors.New("adding CA certificate to pool")
 	}
 
 	// Load client cert/key pair for client authentication
 	clientCert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load client cert/key pair: %v", err)
+		return nil, fmt.Errorf("loading client cert/key pair: %v", err)
 	}
 
 	// Configure TLS

@@ -23,7 +23,7 @@ func (c *Client) StopJob(ctx context.Context, jobID string) (success bool, messa
 		JobId: jobID,
 	})
 	if err != nil {
-		return false, "", fmt.Errorf("failed to stop job: %v", err)
+		return false, "", fmt.Errorf("stopping job: %w", err)
 	}
 
 	return resp.Success, resp.Message, nil
@@ -34,7 +34,7 @@ func (c *Client) GetStatus(ctx context.Context, jobID string) (status pb.GetStat
 		JobId: jobID,
 	})
 	if err != nil {
-		return pb.GetStatusResponse_UNKNOWN, -1, "", fmt.Errorf("failed to get status: %v", err)
+		return pb.GetStatusResponse_UNKNOWN, -1, "", fmt.Errorf("GetStatus: %w", err)
 	}
 
 	return resp.Status, resp.ExitCode, resp.Message, nil
@@ -47,7 +47,7 @@ func (c *Client) StreamOutput(ctx context.Context, jobID string, handler func(ch
 		JobId: jobID,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to start stream: %v", err)
+		return fmt.Errorf("starting stream: %w", err)
 	}
 
 	for {
@@ -57,7 +57,7 @@ func (c *Client) StreamOutput(ctx context.Context, jobID string, handler func(ch
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("stream error: %v", err)
+			return fmt.Errorf("stream error: %w", err)
 		}
 
 		// call handler with chunk
