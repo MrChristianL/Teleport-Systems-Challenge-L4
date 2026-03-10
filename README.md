@@ -12,6 +12,22 @@ A prototype remote job execution service that provides a gRPC API to run, manage
 - **Binary Safety**: Support for raw binary process output.
 - **Concurrent Observability**: Multiple clients can stream the same job simultaneously, including full historic output replay and live update streaming.
 
+## Makefile
+The accompanying Makefile provides support for commonly utilized commands, such as building, testing, and initializing a server.
+
+```bash
+make gen-certs  # Generate client certificates
+make gen-proto  # Generate .pb files
+
+make build      # Build server binary /bin/linux/server
+make run-server # Run server binary
+make clean      # Delete server binary
+
+make test       # Run tests
+make test-race  # Run tests with race detector
+```
+
+
 ## Worker Library
 The Worker library provides process execution and output streaming primitives for the remote job execution service.
 
@@ -41,3 +57,22 @@ Key scenarios tested:
 - Context cancellation
 - Process lifecycle (stop vs finish)
 - Concurrent job creation
+
+## API (Server)
+The gRPC server acts as the brige between the client and the Worker library. The gRPC server is also responsible for the security of the remote job execution server, utilizing RBAC authorization and mTLS authentication.
+
+### Features
+- mTLS (TLS 1.3 enforced)
+- RBAC authorization (SAN identity-derived)
+- Multitenant output streaming support
+
+### Testing
+Test coverage: **73.1**%
+All tests pass with race detector enabled.
+
+Key scenarios tested:
+- RPCs are limited based on user role
+- TLS enforced
+- Context cancelation of streams, not jobs
+- Streaming live and historical output
+

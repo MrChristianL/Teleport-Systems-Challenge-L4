@@ -1,4 +1,10 @@
+BINARIES := bin/linux/server
 .DEFAULT_GOAL := help
+
+# -- directory rules --
+bin/linux:
+	@mkdir -p $@
+
 
 .PHONY: help
 help:
@@ -27,6 +33,28 @@ gen-certs:
 	@./gen-certs.sh
 	@echo ""
 	@echo "  [DONE] TLS certificates generated in /certs directory"
+
+# -- build --
+
+# rebuilds if any Go file in the relevant packages changes
+.PHONY: build
+build: $(BINARIES)
+
+bin/linux/server: $(shell find cmd/server internal -name '*.go' 2>/dev/null) | bin/linux
+	@echo "Building gRPC Server..."
+	@go build -o $@ ./cmd/server
+	@echo "  [DONE] $@"
+
+.PHONY: run-server
+run-server: bin/linux/server
+	@echo "Starting gRPC server..."
+	@./bin/linux/server
+
+.PHONY: clean
+clean:
+	@echo "Cleaning up binaries..."
+	@rm -f $(BINARIES)
+	@echo "  [DONE] Binaries removed"
 
 # -- tests --
 
