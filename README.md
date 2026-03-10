@@ -98,7 +98,7 @@ Key scenarios tested:
 - The `--cert` flag allows users to select which certificate they use to use when executing commands (for ease of testing)
   - Example: `./bin/linux/jobctl --cert=admin start echo hello`
 
-- `status`, and `stream` support funneling arguments from `start`, allowing users to avoid having to re-type the job ID when starting new jobs
+- `status` and `stream` commands support funneling arguments from `start`, allowing users to avoid having to re-type the job ID when starting new jobs
   - Example: `./bin/linux/jobctl start echo hi | ./bin/linux/jobctl status`
 
 ### Testing
