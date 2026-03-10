@@ -76,3 +76,16 @@ Key scenarios tested:
 - Context cancelation of streams, not jobs
 - Streaming live and historical output
 
+## API (Client)
+The gRPC client is the entry point for the end-user's CLI tool. It manages the mTLS handshake, credential loading, and the lifecycle of long-lived gRPC streams, ensuring secure and resilient communication with the remote service.
+
+### Features
+
+### Testing
+Test coverage: **77.3%**
+All tests pass with race detector enabled.
+
+Key scenarios tested:
+- Non-existent job interactions
+- Client response to no server
+- Multi-client output streaming
