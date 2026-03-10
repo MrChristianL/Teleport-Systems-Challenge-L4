@@ -91,3 +91,14 @@ Key scenarios tested:
 - Non-existent job interactions
 - Client response to no server
 - Multi-client output streaming
+
+## Jobctl CLI
+
+### Features
+- The `--cert` flag allows users to select which certificate they use to use when executing commands (for ease of testing)
+- `status`, `stop`, and `stream` support funneling arguments from `start`, allowing users to avoid having to re-type the job ID when starting new jobs
+
+### Testing
+Test coverage: **N/A**
+
+Testing for the CLI doesn't exist as the CLI is simply a wrapper for the client, server, and worker library. The CLI does not present any additional logic to test at this time.

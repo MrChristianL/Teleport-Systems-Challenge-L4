@@ -32,21 +32,21 @@ func Execute() {
 
 // helper function that allows users to select cert levels (role) for running commands
 // DEFAULT: Admin user
-func certPathsForRole(cmd *cobra.Command) (certFile, keyFile, caFile string) {
-	role, _ := cmd.Flags().GetString("role")
+func certPathsForRole(cmd *cobra.Command) (certPath, keyFile, caFile string) {
+	cert, _ := cmd.Flags().GetString("cert")
 	caFile, _ = cmd.Flags().GetString("ca")
 
 	// if cert/key were explicitly provided, use those
-	certFile, _ = cmd.Flags().GetString("cert")
+	certPath, _ = cmd.Flags().GetString("cert")
 	keyFile, _ = cmd.Flags().GetString("key")
 
 	// if role was explicitly set, override cert/key
 	if cmd.Flags().Changed("role") {
-		certFile = fmt.Sprintf("certs/%s-cert.pem", role)
-		keyFile = fmt.Sprintf("certs/%s-key.pem", role)
+		certPath = fmt.Sprintf("certs/%s-cert.pem", cert)
+		keyFile = fmt.Sprintf("certs/%s-key.pem", cert)
 	}
 
-	return certFile, keyFile, caFile
+	return certPath, keyFile, caFile
 }
 
 func init() {
