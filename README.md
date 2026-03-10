@@ -67,7 +67,11 @@ The gRPC server acts as the bridge between the client and the Worker library. Th
 - Multitenant output streaming support
 
 ### Testing
+<<<<<<< HEAD
 Test coverage: **72.0%**
+=======
+Test coverage: **72.5%**
+>>>>>>> 87595c5 (Correct README typos and update test coverage)
 All tests pass with race detector enabled.
 
 Key scenarios tested:
@@ -76,7 +80,11 @@ Key scenarios tested:
 - Context cancellation of streams, not jobs
 - Streaming live and historical output
 
+<<<<<<< HEAD
 # API (Client)
+=======
+## API (Client)
+>>>>>>> 87595c5 (Correct README typos and update test coverage)
 The gRPC client is the entry point for the end-user's CLI tool. It manages the mTLS handshake, credential loading, and the lifecycle of long-lived gRPC streams, ensuring secure and resilient communication with the remote service.
 
 ### Features
