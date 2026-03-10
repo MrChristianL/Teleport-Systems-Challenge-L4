@@ -30,34 +30,52 @@ func Execute() {
 	}
 }
 
-// helper function that allows users to select cert levels (role) for running commands
-// DEFAULT: Admin user
+// certPathsForRole returns cert paths based on --cert flag
+// Supports convenience values: "admin", "user", "unknown"
+// Or full paths: "certs/custom-cert.pem"
 func certPathsForRole(cmd *cobra.Command) (certPath, keyFile, caFile string) {
-	// Get the base flag values
-	role, _ := cmd.Flags().GetString("role")
+	certFlag, _ := cmd.Flags().GetString("cert")
 	caFile, _ = cmd.Flags().GetString("ca")
-	certPath, _ = cmd.Flags().GetString("cert")
-	keyFile, _ = cmd.Flags().GetString("key")
-
-	// If the user ONLY provided --role, override the cert/key paths automatically
-	// But if they provided specific --cert or --key flags, respect those.
-	if cmd.Flags().Changed("role") && !cmd.Flags().Changed("cert") && !cmd.Flags().Changed("key") {
-		certPath = fmt.Sprintf("certs/%s-cert.pem", role)
-		keyFile = fmt.Sprintf("certs/%s-key.pem", role)
+	
+	// Check if user provided a convenience name (admin, user, unknown)
+	// or a full path
+	switch certFlag {
+	case "admin", "user", "unknown":
+		// Convenience: --cert=admin expands to certs/admin-cert.pem
+		certPath = fmt.Sprintf("certs/%s-cert.pem", certFlag)
+		keyFile = fmt.Sprintf("certs/%s-key.pem", certFlag)
+	default:
+		// Full path provided: --cert=certs/custom-cert.pem
+		certPath = certFlag
+		
+		// Try to infer key path by replacing -cert.pem with -key.pem
+		if strings.HasSuffix(certPath, "-cert.pem") {
+			keyFile = strings.Replace(certPath, "-cert.pem", "-key.pem", 1)
+		} else if strings.HasSuffix(certPath, ".pem") {
+			// Fallback: replace .pem with -key.pem
+			keyFile = strings.Replace(certPath, ".pem", "-key.pem", 1)
+		} else {
+			// Can't infer, user must provide --key explicitly
+			keyFile, _ = cmd.Flags().GetString("key")
+		}
 	}
-
+	
+	// Allow explicit --key override
+	if cmd.Flags().Changed("key") {
+		keyFile, _ = cmd.Flags().GetString("key")
+	}
+	
 	return certPath, keyFile, caFile
 }
 
 func init() {
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 
-	// 1. Define the role
-	rootCmd.PersistentFlags().String("role", "admin", "Role to use (admin, user, unknown)")
-
-	// 2. Define the paths with sensible defaults
+	// Certificate flags
+	rootCmd.PersistentFlags().String("cert", "admin", "Client certificate (admin, user, unknown, or path to cert file)")
+	rootCmd.PersistentFlags().String("key", "", "Path to client key (optional, auto-detected from --cert)")
 	rootCmd.PersistentFlags().String("ca", "certs/ca-cert.pem", "Path to CA certificate")
-	rootCmd.PersistentFlags().String("cert", "certs/admin-cert.pem", "Path to client certificate")
-	rootCmd.PersistentFlags().String("key", "certs/admin-key.pem", "Path to client key")
+	
+	// Server address
 	rootCmd.PersistentFlags().String("server", "localhost:50051", "Server address")
 }
