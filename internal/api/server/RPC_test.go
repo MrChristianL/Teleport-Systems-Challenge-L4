@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -14,59 +13,44 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// func TestStartAndGetStatus(t *testing.T) {
-// 	// start a server as admin
-// 	client, cleanup := createNewServerSingleClient(t, "admin")
-// 	defer cleanup()
+// TestStartandGetStatus verifies the StartJob and GetStatus RPCs
+func TestStartAndGetStatus(t *testing.T) {
+	// start a server as admin
+	client, cleanup := createNewServerSingleClient(t, "admin")
+	defer cleanup()
 
-// 	// start a job
-// 	job, err := client.StartJob(context.Background(), &pb.StartJobRequest{
-// 		Command: []string{"echo", "hello"},
-// 	})
-// 	if err != nil {
-// 		t.Fatalf("StartJob failed: %v", err)
-// 	}
+	job, err := client.StartJob(t.Context(), &pb.StartJobRequest{
+		Command: []string{"true"},
+	})
 
-// 	if job.JobId == "" {
-// 		t.Fatal("expected non-empty job ID")
-// 	}
+	if err != nil {
+		t.Fatalf("StartJob failed: %v", err)
+	}
 
-// 	// immediate check should show job as RUNNING
-// 	firstStatus, err := client.GetStatus(context.Background(), &pb.GetStatusRequest{
-// 		JobId: job.JobId,
-// 	})
-// 	if err != nil {
-// 		t.Fatalf("GetStatus failed: %v", err)
-// 	}
+	resp, err := client.GetStatus(t.Context(), &pb.GetStatusRequest{
+		JobId: job.JobId,
+	})
+	if err != nil {
+		t.Fatalf("GetStatus failed: %v", err)
+	}
 
-// 	if firstStatus.Status != pb.GetStatusResponse_RUNNING {
-// 		t.Errorf("expected status RUNNING, got %s", firstStatus.Status)
-// 	}
+	if resp.Status != pb.GetStatusResponse_FINISHED {
+		t.Errorf("expected status FINISHED, got %s", resp.Status)
+	}
 
-// 	// wait for job to finish and check status
-// 	time.Sleep(100 * time.Millisecond)
-// 	secondStatus, err := client.GetStatus(context.Background(), &pb.GetStatusRequest{
-// 		JobId: job.JobId,
-// 	})
-// 	if err != nil {
-// 		t.Fatalf("GetStatus failed: %v", err)
-// 	}
+	if resp.ExitCode != 0 {
+		t.Errorf("expected exit code 0, got %d", resp.ExitCode)
+	}
+}
 
-// 	if secondStatus.Status != pb.GetStatusResponse_FINISHED {
-// 		t.Errorf("expected status FINISHED, got %s", secondStatus.Status)
-// 	}
-
-// 	if secondStatus.ExitCode != 0 {
-// 		t.Errorf("expected exit code 0, got %d", secondStatus.ExitCode)
-// 	}
-// }
-
+// TestStopJob verifies the StopJob RPC and that stopped jobs return
+// status: STOPPED
 func TestStopJob(t *testing.T) {
 	client, cleanup := createNewServerSingleClient(t, "admin")
 	defer cleanup()
 
 	// start a long-running job
-	startResp, err := client.StartJob(context.Background(), &pb.StartJobRequest{
+	startResp, err := client.StartJob(t.Context(), &pb.StartJobRequest{
 		Command: []string{"sleep", "100"},
 	})
 	if err != nil {
@@ -74,7 +58,7 @@ func TestStopJob(t *testing.T) {
 	}
 
 	// stop the job
-	stopResp, err := client.StopJob(context.Background(), &pb.StopJobRequest{
+	stopResp, err := client.StopJob(t.Context(), &pb.StopJobRequest{
 		JobId: startResp.JobId,
 	})
 	if err != nil {
@@ -84,220 +68,192 @@ func TestStopJob(t *testing.T) {
 		t.Fatalf("StopJob returned success=false: %s", stopResp.Message)
 	}
 
-	// poll status until job is no longer running using waitgroup
-	var finalStatus *pb.GetStatusResponse
-	statusChan := make(chan *pb.GetStatusResponse, 1)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	statusResp, err := client.GetStatus(t.Context(), &pb.GetStatusRequest{
+		JobId: startResp.JobId,
+	})
 
-	var wg sync.WaitGroup
-	wg.Add(1)
+	if statusResp.Status != pb.GetStatusResponse_STOPPED {
+		t.Errorf("expected STOPPED after Stop(), got %s", statusResp)
+	}
+
+}
+
+// TestMultipleClients verifies numerous clients can stream output at a time
+// and that unknown users are unable to stream output
+func TestMultipleClients(t *testing.T) {
+	clients, cleanup := createNewServerMultipleClients(t, "admin", "user", "unknown")
+	defer cleanup()
+
+	admin, user, unknown := clients[0], clients[1], clients[2]
+
+	startResp, err := admin.StartJob(t.Context(), &pb.StartJobRequest{
+		Command: []string{"echo", "-n", "hello world"},
+	})
+	if err != nil {
+		t.Fatalf("failed to StartJob: %v", err)
+	}
+
+	// capture output and err for collectStream helper function
+	type result struct {
+		out string
+		err error
+	}
+	adminResCh := make(chan result, 1)
+	userResCh := make(chan result, 1)
+
 	go func() {
-		defer wg.Done()
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-
-		for {
-			status, err := client.GetStatus(context.Background(), &pb.GetStatusRequest{
-				JobId: startResp.JobId,
-			})
-			if err != nil {
-				t.Errorf("GetStatus failed: %v", err)
-				return
-			}
-
-			if status.Status != pb.GetStatusResponse_RUNNING {
-				statusChan <- status
-				return
-			}
-
-			select {
-			case <-ticker.C:
-				continue
-			case <-ctx.Done():
-				return
-			}
-		}
+		out, err := collectStream(t.Context(), admin, startResp.JobId)
+		adminResCh <- result{out, err}
+	}()
+	go func() {
+		out, err := collectStream(t.Context(), user, startResp.JobId)
+		userResCh <- result{out, err}
 	}()
 
-	select {
-	case finalStatus = <-statusChan:
-		// Got the final status
-	case <-ctx.Done():
-		t.Fatalf("timeout waiting for job to stop")
+	// Handle the 'unknown' client (expected to fail)
+	// We do this in the main thread to keep the logic clear
+	_, recvErr := collectStream(t.Context(), unknown, startResp.JobId)
+
+	if recvErr == nil {
+		t.Errorf("expected error for unknown user, got nil")
+	} else {
+		st, ok := status.FromError(recvErr)
+		if !ok || st.Code() != codes.Unauthenticated {
+			t.Errorf("expected code Unauthenticated, got %v (%v)", st.Code(), recvErr)
+		}
 	}
 
-	wg.Wait()
+	// collect and validate concurrent results
+	resAdmin := <-adminResCh
+	resUser := <-userResCh
 
-	if finalStatus.Status != pb.GetStatusResponse_STOPPED {
-		t.Errorf("expected STOPPED after stop, got %s", finalStatus.Status)
+	if resAdmin.err != nil {
+		t.Errorf("admin stream failed: %v", resAdmin.err)
+	}
+	if resUser.err != nil {
+		t.Errorf("user stream failed: %v", resUser.err)
 	}
 
-	if finalStatus.ExitCode == 0 {
-		t.Errorf("expected non-zero exit code after SIGKILL, got 0")
+	if resAdmin.out != "hello world" {
+		t.Errorf("expected 'hello world', got %q", resAdmin.out)
+	}
+
+	if resAdmin.out != resUser.out {
+		t.Errorf("outputs mismatch!\nAdmin: %q\nUser:  %q", resAdmin.out, resUser.out)
 	}
 }
 
-// func TestMultipleClients(t *testing.T) {
-// 	clients, cleanup := createNewServerMultipleClients(t, "admin", "user", "unknown")
-// 	defer cleanup()
+// TestStreamLiveOutput verifies that clients can stream output as it is published to disk
+func TestStreamLiveOutput(t *testing.T) {
+	client, cleanup := createNewServerSingleClient(t, "admin")
+	defer cleanup()
 
-// 	admin := clients[0]
-// 	user := clients[1]
-// 	unknown := clients[2]
+	// start a job that takes long enough to stream while running
+	startResp, err := client.StartJob(t.Context(), &pb.StartJobRequest{
+		Command: []string{"seq", "1", "10000"},
+	})
+	if err != nil {
+		t.Fatalf("StartJob failed: %v", err)
+	}
 
-// 	// admin starts the job
-// 	startResp, err := admin.StartJob(context.Background(), &pb.StartJobRequest{
-// 		Command: []string{"echo", "hello world"},
-// 	})
-// 	if err != nil {
-// 		t.Fatalf("failed to StartJob: %v", err)
-// 	}
+	// subscribe immediately — job should still be running
+	stream, err := client.StreamOutput(t.Context(), &pb.StreamOutputRequest{
+		JobId: startResp.JobId,
+	})
+	if err != nil {
+		t.Fatalf("StreamOutput failed: %v", err)
+	}
 
-// 	// all clients stream output concurrently
-// 	adminCh := make(chan string, 1)
-// 	userCh := make(chan string, 1)
+	var got []byte
+	for {
+		resp, err := stream.Recv()
+		if err != nil {
+			break
+		}
+		got = append(got, resp.Chunk...)
+	}
 
-// 	go func() { adminCh <- collectStream(t, admin, startResp.JobId) }()
-// 	go func() { userCh <- collectStream(t, user, startResp.JobId) }()
+	lines := strings.Split(strings.TrimSpace(string(got)), "\n")
+	if len(lines) != 10000 {
+		t.Errorf("expected 10000 lines, got %d", len(lines))
+	}
+	if lines[0] != "1" {
+		t.Errorf("expected first line '1', got %q", lines[0])
+	}
+	if lines[9999] != "10000" {
+		t.Errorf("expected last line '10000', got %q", lines[9999])
+	}
+}
 
-// 	// unknown cannot use collectStream.
-// 	// unknown should get permission denied when trying to streamOutput
-// 	unknownStream, err := unknown.StreamOutput(context.Background(), &pb.StreamOutputRequest{
-// 		JobId: startResp.JobId,
-// 	})
-// 	if err != nil {
-// 		t.Fatalf("StreamOutput returned error: %v", err)
-// 	}
+func TestStreamLateSubscriber(t *testing.T) {
+	client, cleanup := createNewServerSingleClient(t, "admin")
+	defer cleanup()
 
-// 	outAdmin := <-adminCh
-// 	outUser := <-userCh
+	startResp, err := client.StartJob(t.Context(), &pb.StartJobRequest{
+		Command: []string{"seq", "1", "500"},
+	})
+	if err != nil {
+		t.Fatalf("StartJob failed: %v", err)
+	}
 
-// 	// unknown should get permission denied error when trying to receive
-// 	var got []byte
-// 	var recvErr error
-// 	for {
-// 		resp, err := unknownStream.Recv()
-// 		if err != nil {
-// 			// Expected: permission denied error
-// 			recvErr = err
-// 			break
-// 		}
-// 		got = append(got, resp.Chunk...)
-// 	}
-// 	outUnknown := string(got)
+	// Active polling: wait up to 2 seconds for the job to finish.
+	pollCtx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
 
-// 	// unknown should get get a Permission Denied error since it has no authorized access
-// 	if recvErr == nil {
-// 		t.Errorf("expected permission denied error for unknown user, got nil")
-// 	} else {
-// 		st, ok := status.FromError(recvErr)
-// 		if !ok {
-// 			t.Errorf("error is not a gRPC status: %v", recvErr)
-// 		} else if st.Code() != codes.PermissionDenied {
-// 			t.Errorf("expected code %v, got %v", codes.PermissionDenied, st.Code())
-// 		}
-// 	}
+	for {
+		statusResp, err := client.GetStatus(pollCtx, &pb.GetStatusRequest{
+			JobId: startResp.JobId,
+		})
+		if err != nil {
+			t.Fatalf("GetStatus failed: %v", err)
+		}
 
-// 	if outAdmin != outUser {
-// 		t.Errorf("client outputs do not match:\nadmin: %q\nuser: %q\nunknown: %q", outAdmin, outUser, outUnknown)
-// 	}
+		if statusResp.Status != pb.GetStatusResponse_RUNNING {
+			break // Job is finished, exit the loop
+		}
 
-// 	if outAdmin == "" {
-// 		t.Errorf("expected output, got empty")
-// 	}
+		select {
+		case <-pollCtx.Done():
+			t.Fatalf("timed out waiting for job to finish")
 
-// 	if outUnknown != "" {
-// 		t.Errorf("unknown user output should be empty, got non-empty output")
-// 	}
-// }
+		// 10ms delay between polling to keep from spamming the server with requests
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 
-// func TestStreamLiveOutput(t *testing.T) {
-// 	client, cleanup := createNewServerSingleClient(t, "admin")
-// 	defer cleanup()
+	// The job is definitively finished. Connect as the late subscriber.
+	stream, err := client.StreamOutput(t.Context(), &pb.StreamOutputRequest{
+		JobId: startResp.JobId,
+	})
+	if err != nil {
+		t.Fatalf("StreamOutput failed: %v", err)
+	}
 
-// 	// start a job that takes long enough to stream while running
-// 	startResp, err := client.StartJob(context.Background(), &pb.StartJobRequest{
-// 		Command: []string{"seq", "1", "10000"},
-// 	})
-// 	if err != nil {
-// 		t.Fatalf("StartJob failed: %v", err)
-// 	}
+	var got []byte
+	for {
+		resp, err := stream.Recv()
+		if err != nil {
+			break
+		}
+		got = append(got, resp.Chunk...)
+	}
 
-// 	// subscribe immediately — job should still be running
-// 	stream, err := client.StreamOutput(context.Background(), &pb.StreamOutputRequest{
-// 		JobId: startResp.JobId,
-// 	})
-// 	if err != nil {
-// 		t.Fatalf("StreamOutput failed: %v", err)
-// 	}
+	// seq 1 500 produces "1\n2\n...500\n"
+	lines := strings.Split(strings.TrimSpace(string(got)), "\n")
+	if len(lines) != 500 {
+		t.Errorf("expected 500 lines, got %d", len(lines))
+	}
 
-// 	var got []byte
-// 	for {
-// 		resp, err := stream.Recv()
-// 		if err != nil {
-// 			break
-// 		}
-// 		got = append(got, resp.Chunk...)
-// 	}
+	if lines[0] != "1" {
+		t.Errorf("expected first line to be '1', got %q", lines[0])
+	}
 
-// 	lines := strings.Split(strings.TrimSpace(string(got)), "\n")
-// 	if len(lines) != 10000 {
-// 		t.Errorf("expected 10000 lines, got %d", len(lines))
-// 	}
-// 	if lines[0] != "1" {
-// 		t.Errorf("expected first line '1', got %q", lines[0])
-// 	}
-// 	if lines[9999] != "10000" {
-// 		t.Errorf("expected last line '10000', got %q", lines[9999])
-// 	}
-// }
+	if lines[499] != "500" {
+		t.Errorf("expected last line to be '500', got %q", lines[499])
+	}
+}
 
-// func TestStreamLargeOutputWithLateSubscriber(t *testing.T) {
-// 	client, cleanup := createNewServerSingleClient(t, "admin")
-// 	defer cleanup()
-
-// 	startResp, err := client.StartJob(context.Background(), &pb.StartJobRequest{
-// 		Command: []string{"seq", "1", "500"},
-// 	})
-// 	if err != nil {
-// 		t.Fatalf("StartJob failed: %v", err)
-// 	}
-
-// 	// wait for job to finish, then verify late subscriber still gets full output
-// 	time.Sleep(200 * time.Millisecond)
-
-// 	stream, err := client.StreamOutput(context.Background(), &pb.StreamOutputRequest{
-// 		JobId: startResp.JobId,
-// 	})
-// 	if err != nil {
-// 		t.Fatalf("StreamOutput failed: %v", err)
-// 	}
-
-// 	var got []byte
-// 	for {
-// 		resp, err := stream.Recv()
-// 		if err != nil {
-// 			break
-// 		}
-// 		got = append(got, resp.Chunk...)
-// 	}
-
-// 	// seq 1 500 produces "1\n2\n...500\n"
-// 	lines := strings.Split(strings.TrimSpace(string(got)), "\n")
-// 	if len(lines) != 500 {
-// 		t.Errorf("expected 500 lines, got %d", len(lines))
-// 	}
-
-// 	if lines[0] != "1" {
-// 		t.Errorf("expected first line to be '1', got %q", lines[0])
-// 	}
-
-// 	if lines[499] != "500" {
-// 		t.Errorf("expected last line to be '500', got %q", lines[499])
-// 	}
-// }
-
+// TestStopNonExistentJob verifies stopping a non-existent job returns an error
 func TestStopNonExistentJob(t *testing.T) {
 	client, cleanup := createNewServerSingleClient(t, "admin")
 	defer cleanup()
@@ -305,7 +261,7 @@ func TestStopNonExistentJob(t *testing.T) {
 	jobID := "job-123abc"
 
 	// stop job that doesn't exist
-	stopResp, err := client.StopJob(context.Background(), &pb.StopJobRequest{
+	stopResp, err := client.StopJob(t.Context(), &pb.StopJobRequest{
 		JobId: jobID,
 	})
 	if err != nil {
@@ -323,6 +279,7 @@ func TestStopNonExistentJob(t *testing.T) {
 	}
 }
 
+// TestGetStatusNonExistentJob verifies GetStatus returns UNKNOWN for a non-existent job
 func TestGetStatusNonExistentJob(t *testing.T) {
 	client, cleanup := createNewServerSingleClient(t, "user")
 	defer cleanup()
@@ -330,7 +287,7 @@ func TestGetStatusNonExistentJob(t *testing.T) {
 	jobID := "job-123abc"
 
 	// get status for job that doesn't exist
-	statusResp, err := client.GetStatus(context.Background(), &pb.GetStatusRequest{
+	statusResp, err := client.GetStatus(t.Context(), &pb.GetStatusRequest{
 		JobId: jobID,
 	})
 
@@ -347,13 +304,14 @@ func TestGetStatusNonExistentJob(t *testing.T) {
 	}
 }
 
+// TestStreamOutputNonExistentJob verifies StreamOutput returns error for non-existent jobs
 func TestStreamOutputNonExistentJob(t *testing.T) {
 	client, cleanup := createNewServerSingleClient(t, "user")
 	defer cleanup()
 
 	jobID := "job-123abc"
 
-	stream, err := client.StreamOutput(context.Background(), &pb.StreamOutputRequest{
+	stream, err := client.StreamOutput(t.Context(), &pb.StreamOutputRequest{
 		JobId: jobID,
 	})
 	if err != nil {
@@ -373,12 +331,14 @@ func TestStreamOutputNonExistentJob(t *testing.T) {
 	}
 }
 
+// TestStartJobBadCommand verifies StartJob returns an error for invalid commands.
+// The Python3 command is invalid in this case because we do not have that script present
 func TestStartJobBadCommmand(t *testing.T) {
 	client, cleanup := createNewServerSingleClient(t, "admin")
 	defer cleanup()
 
 	// start a job
-	job, err := client.StartJob(context.Background(), &pb.StartJobRequest{
+	job, err := client.StartJob(t.Context(), &pb.StartJobRequest{
 		Command: []string{"python3", "script.py"}, // attempt to run a script we do not  have
 	})
 	if err != nil {
@@ -389,11 +349,33 @@ func TestStartJobBadCommmand(t *testing.T) {
 		t.Fatal("expected non-empty job ID")
 	}
 
-	// wait for fast-failing job to exit
-	time.Sleep(200 * time.Millisecond)
+	// Active polling: wait up to 2 seconds for the job to fail
+	pollCtx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	for {
+		statusResp, err := client.GetStatus(pollCtx, &pb.GetStatusRequest{
+			JobId: job.JobId,
+		})
+		if err != nil {
+			t.Fatalf("GetStatus failed: %v", err)
+		}
+
+		if statusResp.Status != pb.GetStatusResponse_RUNNING {
+			break // Job is finished, exit the loop
+		}
+
+		select {
+		case <-pollCtx.Done():
+			t.Fatalf("timed out waiting for job to finish")
+
+		case <-time.After(10 * time.Millisecond):
+			// Continue to next iteration
+		}
+	}
 
 	// check status of job -- should have failed
-	statusResp, err := client.GetStatus(context.Background(), &pb.GetStatusRequest{
+	statusResp, err := client.GetStatus(t.Context(), &pb.GetStatusRequest{
 		JobId: job.JobId,
 	})
 	if err != nil {
@@ -409,11 +391,12 @@ func TestStartJobBadCommmand(t *testing.T) {
 	}
 }
 
+// TestStartJobNonExistentBinary verifies invalid StartJob return error when targeting non-existant binaries
 func TestStartJobNonExistentBinary(t *testing.T) {
 	client, cleanup := createNewServerSingleClient(t, "admin")
 	defer cleanup()
 
-	_, err := client.StartJob(context.Background(), &pb.StartJobRequest{
+	_, err := client.StartJob(t.Context(), &pb.StartJobRequest{
 		Command: []string{"/usr/local/nonexistent"},
 	})
 	if err == nil {
@@ -429,5 +412,74 @@ func TestStartJobNonExistentBinary(t *testing.T) {
 	}
 	if !strings.Contains(s.Message(), "executable not found") {
 		t.Errorf("expected 'executable not found' in message, got %q", s.Message())
+	}
+}
+
+// TestStreamCancellation verifies clients can cancel streams without canceling full jobs
+func TestStreamCancellation(t *testing.T) {
+	client, cleanup := createNewServerSingleClient(t, "admin")
+	defer cleanup()
+
+	job, err := client.StartJob(t.Context(), &pb.StartJobRequest{
+		Command: []string{"sleep", "10"},
+	})
+	if err != nil {
+		t.Fatalf("StartJob(): %v", err)
+	}
+
+	// Create a cancellable context specifically for the stream
+	streamCtx, cancelStream := context.WithCancel(t.Context())
+
+	stream, err := client.StreamOutput(streamCtx, &pb.StreamOutputRequest{
+		JobId: job.JobId,
+	})
+	if err != nil {
+		t.Fatalf("StreamOutput(): %v", err)
+	}
+
+	// active polling for up to 2 seconds to ensure job is Running
+	pollCtx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	for {
+		statusResp, err := client.GetStatus(pollCtx, &pb.GetStatusRequest{
+			JobId: job.JobId,
+		})
+		if err != nil {
+			t.Fatalf("GetStatus failed: %v", err)
+		}
+		if statusResp.Status == pb.GetStatusResponse_RUNNING {
+			break // Job is Running, exit loop
+		}
+
+		select {
+		case <-pollCtx.Done():
+			t.Fatalf("timed out waiting for job to finish")
+		case <-time.After(10 * time.Millisecond):
+			// Continue to next iteration
+		}
+	}
+
+	cancelStream()
+
+	// Verify the stream returns a cancellation error
+	_, recvErr := stream.Recv()
+	if recvErr == nil {
+		t.Fatal("expected error after context cancel, got nil")
+	}
+	st, ok := status.FromError(recvErr)
+	if !ok || (st.Code() != codes.Canceled && st.Code() != codes.Unavailable) {
+		t.Errorf("expected Canceled or Unavailable, got %v", st.Code())
+	}
+
+	// The job itself should still be running — canceling the stream is not stopping the job
+	jobStatus, err := client.GetStatus(t.Context(), &pb.GetStatusRequest{
+		JobId: job.JobId,
+	})
+	if err != nil {
+		t.Fatalf("GetStatus(): %v", err)
+	}
+	if jobStatus.Status != pb.GetStatusResponse_RUNNING {
+		t.Errorf("expected job still RUNNING after stream cancel, got %s", jobStatus.Status)
 	}
 }

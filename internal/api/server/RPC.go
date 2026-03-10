@@ -1,14 +1,12 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"syscall"
-	"time"
 
 	"github.com/mrchristianl/teleport-systems-challenge-l4/internal/worker"
 	pb "github.com/mrchristianl/teleport-systems-challenge-l4/protobuf/v1"
@@ -69,9 +67,10 @@ func (s *server) GetStatus(ctx context.Context, req *pb.GetStatusRequest) (*pb.G
 	}
 
 	// map worker.Status to protoBuf Status
-	status := job.Status()
+	snapshot := job.Snapshot()
+
 	var pbStatus pb.GetStatusResponse_Status
-	switch status {
+	switch snapshot.Status {
 	case worker.Running:
 		pbStatus = pb.GetStatusResponse_RUNNING
 	case worker.Finished:
@@ -86,8 +85,8 @@ func (s *server) GetStatus(ctx context.Context, req *pb.GetStatusRequest) (*pb.G
 
 	return &pb.GetStatusResponse{
 		Status:   pbStatus,
-		ExitCode: int32(job.ExitCode()),
-		Message:  job.StopReason(),
+		ExitCode: int32(snapshot.ExitCode),
+		Message:  snapshot.StopReason,
 	}, nil
 }
 
@@ -97,16 +96,27 @@ func (s *server) StreamOutput(req *pb.StreamOutputRequest, stream pb.JobService_
 		return status.Errorf(codes.NotFound, "[%s] job not found: %v", req.JobId, err)
 	}
 
-	clientID := fmt.Sprintf("grpc-stream-%s-%d", req.JobId, time.Now().UnixNano())
-
-	var output bytes.Buffer
-	if err := job.StreamFromDisk(stream.Context(), &output); err != nil {
+	w := &streamWriter{stream: stream}
+	if err := job.StreamFromDisk(stream.Context(), w); err != nil {
 		if stream.Context().Err() != nil {
-			return status.Errorf(codes.Canceled, "[%s] stream canceled", clientID)
+			return status.Errorf(codes.Canceled, "stream canceled")
 		}
-		return status.Errorf(codes.Internal, "[%s] stream failed: %v", clientID, err)
+		return status.Errorf(codes.Internal, "stream failed: %v", err)
 	}
 	return nil
+}
+
+type streamWriter struct {
+	stream pb.JobService_StreamOutputServer
+}
+
+func (w *streamWriter) Write(p []byte) (int, error) {
+	chunk := make([]byte, len(p))
+	copy(chunk, p)
+	if err := w.stream.Send(&pb.StreamOutputResponse{Chunk: chunk}); err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }
 
 func userFriendlyStartError(err error) string {
@@ -122,5 +132,6 @@ func userFriendlyStartError(err error) string {
 		}
 	}
 
+	// default message
 	return "failed to start job"
 }

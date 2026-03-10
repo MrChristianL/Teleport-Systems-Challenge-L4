@@ -22,12 +22,12 @@ func NewServer() error {
 		"certs/server-key.pem",
 	)
 	if err != nil {
-		return fmt.Errorf("failed to load TLS configuration:  %w", err)
+		return fmt.Errorf("loading TLS configuration:  %w", err)
 	}
 
 	lis, err := net.Listen("tcp", ":50051")
 	if err != nil {
-		return fmt.Errorf("failed to listen (port 50051): %w", err)
+		return fmt.Errorf("listening on port 50051: %w", err)
 	}
 
 	s := grpc.NewServer(

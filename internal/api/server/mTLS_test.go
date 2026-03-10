@@ -50,7 +50,7 @@ func TestTLSVersion(t *testing.T) {
 
 	// Try to make an RPC call - this will trigger the TLS handshake
 	client := pb.NewJobServiceClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 
 	_, err = client.GetStatus(ctx, &pb.GetStatusRequest{

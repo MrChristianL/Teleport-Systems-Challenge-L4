@@ -15,10 +15,12 @@ any CLI implementation.
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"testing"
@@ -143,23 +145,23 @@ func connectClientWithCert(t *testing.T, addr string, certPrefix string) (*grpc.
 }
 
 // Collects content of a stream (given valid permisssions) and returns what the client got
-func collectStream(t *testing.T, client pb.JobServiceClient, jobID string) string {
-	t.Helper()
-
-	stream, err := client.StreamOutput(context.Background(), &pb.StreamOutputRequest{
+func collectStream(ctx context.Context, client pb.JobServiceClient, jobID string) (string, error) {
+	stream, err := client.StreamOutput(ctx, &pb.StreamOutputRequest{
 		JobId: jobID,
 	})
 	if err != nil {
-		t.Fatalf("StreamOutput failed: %v", err)
+		return "", err
 	}
 
-	var got []byte
+	var buf bytes.Buffer
 	for {
 		resp, err := stream.Recv()
-		if err != nil {
-			break
+		if err == io.EOF {
+			return buf.String(), nil
 		}
-		got = append(got, resp.Chunk...)
+		if err != nil {
+			return buf.String(), err
+		}
+		buf.Write(resp.Chunk)
 	}
-	return string(got)
 }
