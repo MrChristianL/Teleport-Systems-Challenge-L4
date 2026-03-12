@@ -50,8 +50,8 @@ func (b *broker) Write(data []byte) (bytesWritten int, err error) {
 		return 0, nil
 	}
 
-	// Hold the lock to ensure the atomicity of the write operation
-	// relative to the totalWritten counter and the Broadcast signal
+	// Hold the lock to ensure the atomicity of the totalWritten counter
+	// and the Broadcast signal
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
