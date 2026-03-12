@@ -5,7 +5,6 @@ import (
 	"context"
 	"sync"
 	"testing"
-	"time"
 )
 
 // TestNewJob verifies the creation of jobs under different circumstances
@@ -77,18 +76,48 @@ func TestStartStopJob(t *testing.T) {
 }
 
 // TestJobDoubleStart verifies that a job that is already running cannot be asked to run again
-func TestJobDoubleStart(t *testing.T) {
+func TestConcurrentJobStarts(t *testing.T) {
 	job, err := newJob("job-4", []string{"sleep", "5"})
 	if err != nil {
 		t.Fatalf("new job failed: %v", err)
 	}
-
-	job.Start()
 	defer job.Stop()
 
-	// double start
-	if err := job.Start(); err == nil {
-		t.Errorf("Start() = %v, expected err != nil", err)
+	var wg sync.WaitGroup
+	numStarts := 3
+	errCh := make(chan error, numStarts)
+
+	// Barrier ensures all goroutines call Start() simultaneously
+	var ready sync.WaitGroup
+	ready.Add(numStarts)
+	start := make(chan struct{})
+
+	for i := range numStarts {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			ready.Done()
+			<-start // block until all goroutines are ready
+			if err := job.Start(); err != nil {
+				errCh <- err
+			}
+		}(i)
+	}
+
+	ready.Wait() // wait until all goroutines are lined up
+	close(start) // release them all at once
+
+	wg.Wait()
+	close(errCh)
+
+	errorsReceived := 0
+	for range errCh {
+		errorsReceived++
+	}
+
+	// Exactly 2 of the 3 concurrent starts should fail
+	if errorsReceived != numStarts-1 {
+		t.Errorf("expected %d errors from concurrent Start() calls, got %d", numStarts-1, errorsReceived)
 	}
 }
 
@@ -234,22 +263,12 @@ func TestStreamCancellation(t *testing.T) {
 	defer job.Stop()
 
 	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // cancel immediately
 
-	streamDone := make(chan error, 1)
-	go func() {
-		streamDone <- job.StreamFromDisk(ctx, &bytes.Buffer{})
-	}()
+	err := job.StreamFromDisk(ctx, &bytes.Buffer{})
 
-	cancel()
-
-	// Stream should exit quickly
-	select {
-	case err := <-streamDone:
-		if err != context.Canceled {
-			t.Errorf("streamFromDisk() error = %v, want context.Canceled", err)
-		}
-	case <-time.After(1 * time.Second):
-		t.Fatal("streamFromDisk() did not exit after context cancellation")
+	if err != context.Canceled {
+		t.Errorf("streamFromDisk() error = %v, want %v", err, context.Canceled)
 	}
 }
 

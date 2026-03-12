@@ -3,6 +3,7 @@ package worker
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"sync"
 	"testing"
@@ -15,7 +16,7 @@ func TestLargeChunks(t *testing.T) {
 		t.Fatalf("failed to create broker: %v", err)
 	}
 
-	largeData := make([]byte, chunkReadSize*2)
+	largeData := make([]byte, 1024*1024)
 	for i := range largeData {
 		largeData[i] = byte(i % 256)
 	}
@@ -47,30 +48,30 @@ func TestClosedBroker(t *testing.T) {
 	broker.Write([]byte("open"))
 	broker.close()
 
-	// attempt write to closed broker
-	broker.Write([]byte("closed"))
-
-	collect := func() chan []byte {
-		ch := make(chan []byte, 1)
-		go func() {
-			var buf bytes.Buffer
-			if err := broker.streamFromDisk(t.Context(), &buf); err != nil {
-				log.Printf("streamFromDisk Error: %v", err)
-			}
-			ch <- buf.Bytes()
-		}()
-		return ch
+	_, err = broker.Write([]byte("closed"))
+	if err == nil {
+		t.Fatalf("expected error writing to closed broker, got none")
 	}
-
-	ch1 := collect()
-	ch2 := collect()
+	if err != io.ErrClosedPipe {
+		t.Errorf("expected io.ErrClosedPipe, got %v", err)
+	}
 
 	want := []byte("open")
-	if got := <-ch1; !bytes.Equal(got, want) {
-		t.Errorf("client-1: got %q, want %q", string(got), string(want))
+
+	var buf1 bytes.Buffer
+	if err := broker.streamFromDisk(t.Context(), &buf1); err != nil {
+		t.Fatalf("client-1 stream error: %v", err)
 	}
-	if got := <-ch2; !bytes.Equal(got, want) {
-		t.Errorf("client-2: got %q, want %q", string(got), string(want))
+	if !bytes.Equal(buf1.Bytes(), want) {
+		t.Errorf("client-1: got %q, want %q", buf1.Bytes(), want)
+	}
+
+	var buf2 bytes.Buffer
+	if err := broker.streamFromDisk(t.Context(), &buf2); err != nil {
+		t.Fatalf("client-2 stream error: %v", err)
+	}
+	if !bytes.Equal(buf2.Bytes(), want) {
+		t.Errorf("client-2: got %q, want %q", buf2.Bytes(), want)
 	}
 }
 
@@ -99,7 +100,7 @@ func TestBrokerConcurrentStreaming(t *testing.T) {
 			// Signals that the reader is entering the wait loop
 			readyWg.Done()
 			if err := broker.streamFromDisk(t.Context(), &outputs[clientID]); err != nil {
-				log.Printf("streamFromDisk Error: %v", err)
+				t.Logf("streamFromDisk Error: %v", err)
 			}
 		}(i)
 	}
@@ -107,7 +108,7 @@ func TestBrokerConcurrentStreaming(t *testing.T) {
 	readyWg.Wait()
 
 	for i := range numWrites {
-		broker.Write([]byte(fmt.Sprintf("chunk-%d", i)))
+		fmt.Fprintf(broker, "chunk-%d", i)
 	}
 
 	broker.close()

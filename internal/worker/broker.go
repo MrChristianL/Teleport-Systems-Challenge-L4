@@ -15,8 +15,6 @@ import (
 	"sync"
 )
 
-const chunkReadSize = 32 * 1024 // 32 KiB
-
 type broker struct {
 	mu   sync.Mutex
 	cond *sync.Cond // used to broadcast new writes to open readers
@@ -116,7 +114,6 @@ func (b *broker) streamFromDisk(ctx context.Context, out io.Writer) error {
 		b.mu.Unlock()
 	}()
 
-	// buf := make([]byte, chunkReadSize) // 32 KiB read buffer
 	var offset int64
 
 	for {
@@ -132,28 +129,24 @@ func (b *broker) streamFromDisk(ctx context.Context, out io.Writer) error {
 			return fmt.Errorf("reading log file: %w", err)
 		}
 
-		// io.Copy never returns io.EOF
-		// To enter wait loop, readers much check for no progress (bytesRead == 0) with (err == nil)
-		if bytesRead == 0 {
-			b.mu.Lock()
+		// io.Copy never returns io.EOF, so zero bytes with no error means
+		// the reader has caught up and should wait for more data
+		if bytesRead > 0 {
+			continue
+		}
 
-			// if broker is not closed, but we have read all avialable content, reader waits
-			for !b.closed && b.totalWritten == offset {
-				if ctx.Err() != nil {
-					b.mu.Unlock()
-					return ctx.Err()
-				}
-				b.cond.Wait()
+		b.mu.Lock()
+		for b.totalWritten == offset {
+			if ctx.Err() != nil {
+				b.mu.Unlock()
+				return ctx.Err()
 			}
-
-			isClosed := b.closed
-			finalWritten := b.totalWritten
-			b.mu.Unlock()
-
-			// if broker is closed and all data has been read, exit
-			if isClosed && finalWritten == offset {
+			if b.closed {
+				b.mu.Unlock()
 				return nil
 			}
+			b.cond.Wait()
 		}
+		b.mu.Unlock()
 	}
 }

@@ -46,6 +46,7 @@ type Job struct {
 	broker *broker
 
 	// job lifecycle
+	starting bool
 	done     chan struct{}
 	onceDone sync.Once // to ensure cleanup occurs exactly once
 }
@@ -81,10 +82,11 @@ func newJob(id string, command []string) (*Job, error) {
 // Start begins job execution and captures output
 func (j *Job) Start() error {
 	j.mu.Lock()
-	if j.cmd != nil {
+	if j.cmd != nil || j.starting {
 		j.mu.Unlock()
 		return errors.New("job has already started")
 	}
+	j.starting = true
 	j.mu.Unlock()
 
 	cmd := exec.Command(j.Command[0], j.Command[1:]...)
@@ -163,10 +165,6 @@ func (j *Job) StreamFromDisk(ctx context.Context, out io.Writer) error {
 	b := j.broker
 	j.mu.Unlock()
 
-	if b == nil {
-		return errors.New("broker not initialized")
-	}
-
 	// No lock needed while streaming because streaming blocks and would keep other readers
 	// from streaming, waiting for the lock
 	return b.streamFromDisk(ctx, out)
@@ -196,6 +194,7 @@ func (j *Job) watchForFinish() {
 	})
 
 	if j.status != Running {
+		j.exitCode = 137 // stopped via SIGKILL
 		return
 	}
 

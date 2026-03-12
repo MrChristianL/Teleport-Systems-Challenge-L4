@@ -33,7 +33,7 @@ make test       # Run tests
 make test-race  # Run tests with race detector
 ```
 
-Test coverage: 88.0%
+Test coverage: 88.2%
 All tests pass with race detector enabled.
 
 Key scenarios tested:
