@@ -22,7 +22,7 @@ func NewServer() error {
 		"certs/server-key.pem",
 	)
 	if err != nil {
-		return fmt.Errorf("loading TLS configuration:  %w", err)
+		return fmt.Errorf("loading TLS configuration: %w", err)
 	}
 
 	lis, err := net.Listen("tcp", ":50051")
@@ -47,7 +47,7 @@ func NewServer() error {
 	return nil
 }
 
-// this is a helper function be utilized for client testing
+// this is a helper function to be utilized for client testing
 func NewServerWithTracker(tracker *worker.Tracker) *server {
 	return &server{tracker: tracker}
 }

@@ -76,7 +76,7 @@ Key scenarios tested:
 - Context cancellation of streams, not jobs
 - Streaming live and historical output
 
-## API (Client)
+# API (Client)
 The gRPC client is the entry point for the end-user's CLI tool. It manages the mTLS handshake, credential loading, and the lifecycle of long-lived gRPC streams, ensuring secure and resilient communication with the remote service.
 
 ### Features
@@ -91,3 +91,17 @@ Key scenarios tested:
 - Non-existent job interactions
 - Client response to no server
 - Multi-client output streaming
+
+## Jobctl CLI
+
+### Features
+- The `--cert` flag allows users to select which certificate they use to use when executing commands (for ease of testing)
+  - Example: `./bin/linux/jobctl --cert=admin start echo hello`
+
+- `status` and `stream` commands support funneling arguments from `start`, allowing users to avoid having to re-type the job ID when starting new jobs
+  - Example: `./bin/linux/jobctl start echo hi | ./bin/linux/jobctl status`
+
+### Testing
+Test coverage: **N/A**
+
+Testing for the CLI doesn't exist as the CLI is simply a wrapper for the client, server, and worker library. The CLI does not present any additional logic to test at this time.

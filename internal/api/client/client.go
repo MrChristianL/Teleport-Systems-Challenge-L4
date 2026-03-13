@@ -18,13 +18,13 @@ func NewClient(serverAddr string, certFile string, keyFile string, caFile string
 	// Configure client TLS credentials
 	creds, err := ConfigureClientTLS(certFile, keyFile, caFile)
 	if err != nil {
-		return nil, fmt.Errorf("configuring client TLS: %v", err)
+		return nil, fmt.Errorf("configuring client TLS: %w", err)
 	}
 
 	// Create gRPC connection with mTLS
 	conn, err := grpc.NewClient(serverAddr, grpc.WithTransportCredentials(creds))
 	if err != nil {
-		return nil, fmt.Errorf("connecting to server: %v", err)
+		return nil, fmt.Errorf("connecting to server: %w", err)
 	}
 
 	return &Client{

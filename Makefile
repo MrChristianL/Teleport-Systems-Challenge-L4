@@ -1,4 +1,4 @@
-BINARIES := bin/linux/server
+BINARIES := bin/linux/server bin/linux/jobctl
 .DEFAULT_GOAL := help
 
 # -- directory rules --
@@ -42,6 +42,11 @@ gen-certs:
 # rebuilds if any Go file in the relevant packages changes
 .PHONY: build
 build: $(BINARIES)
+
+bin/linux/jobctl: $(shell find cmd/jobctl internal -name '*.go' 2>/dev/null) | bin/linux
+	@echo "Building Client CLI tool..."
+	@go build -o $@ ./cmd/jobctl
+	@echo "  [DONE] $@"
 
 bin/linux/server: $(shell find cmd/server internal -name '*.go' 2>/dev/null) | bin/linux
 	@echo "Building gRPC Server..."
