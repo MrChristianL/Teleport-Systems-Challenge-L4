@@ -147,7 +147,7 @@ func TestMultipleClients(t *testing.T) {
 	userResp := <-userCh
 
 	if len(adminResp) == 0 {
-		t.Errorf("admin rceived no output")
+		t.Errorf("admin received no output")
 	}
 
 	if len(adminResp) != len(userResp) {
@@ -166,11 +166,11 @@ func TestClientStopNonExistentJob(t *testing.T) {
 	jobID := "job-123abc"
 	success, message, err := client.StopJob(t.Context(), jobID)
 	if err != nil {
-		t.Fatalf("StopJob")
+		t.Fatalf("StopJob: %v", err)
 	}
 
 	if success {
-		t.Errorf("StopJob exected to fail, got success")
+		t.Errorf("StopJob expected to fail, got success")
 	}
 
 	expectedMsg := fmt.Sprintf("[%s]: job not found", jobID)
@@ -216,7 +216,6 @@ func TestStreamNonExistentJob(t *testing.T) {
 	jobID := "job-123abc"
 	var handlerCalled bool
 	var streamResp []byte
-	var receivedEOF bool
 	err := client.StreamOutput(t.Context(), jobID, func(chunk []byte) error {
 		handlerCalled = true
 		streamResp = append(streamResp, chunk...)
@@ -228,11 +227,7 @@ func TestStreamNonExistentJob(t *testing.T) {
 	}
 
 	if handlerCalled {
-		t.Error("expected request to never handler, but handler function was called")
-	}
-
-	if receivedEOF {
-		t.Error("EOF flag shouldn't have been sent as the StreamOutput call is never returned, but got true")
+		t.Error("expected handler to never be called, but it was")
 	}
 
 	if len(streamResp) != 0 {
@@ -294,7 +289,7 @@ func TestDuplicateStopJob(t *testing.T) {
 		t.Errorf("expected message output, got nil")
 	}
 
-	// second stop request - should fail
+	// second stop request on already-stopped job — should be idempotent
 	secondResp, secondMsg, err := client.StopJob(t.Context(), jobID)
 
 	if err != nil {

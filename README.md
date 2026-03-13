@@ -67,7 +67,7 @@ The gRPC server acts as the bridge between the client and the Worker library. Th
 - Multitenant output streaming support
 
 ### Testing
-Test coverage: **72.6%**
+Test coverage: **72.0%**
 All tests pass with race detector enabled.
 
 Key scenarios tested:
