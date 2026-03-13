@@ -33,15 +33,15 @@ Example:
 		defer c.Close()
 
 		// Start the job
-		startCtx, startCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		startCtx, startCancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer startCancel()
 
 		jobID, err := c.StartJob(startCtx, args)
 		if err != nil {
-			return fmt.Errorf("Error: %s", nicerErrors(err))
+			return nicerErrors(err)
 		}
 
-		fmt.Printf("%s\n", jobID)
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\n", jobID)
 		return nil
 	},
 }
@@ -55,7 +55,4 @@ func nicerErrors(err error) error {
 
 func init() {
 	rootCmd.AddCommand(startCmd)
-
-	// Command-specific flags
-	startCmd.Flags().BoolP("follow", "f", false, "Automatically stream output after starting job")
 }

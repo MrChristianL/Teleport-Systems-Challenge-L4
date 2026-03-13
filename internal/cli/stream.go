@@ -57,12 +57,13 @@ Press Ctrl + C to stop streaming (job continues running)...`,
 		defer c.Close()
 
 		// Stream output
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
 
+		out := cmd.OutOrStdout()
 		err = c.StreamOutput(ctx, jobID, func(chunk []byte) error {
 			// Write chunk directly to stdout (preserves binary data)
-			os.Stdout.Write(chunk)
+			out.Write(chunk)
 			return nil
 		})
 

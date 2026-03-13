@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mrchristianl/teleport-systems-challenge-l4/internal/api/client"
+	pb "github.com/mrchristianl/teleport-systems-challenge-l4/protobuf/v1"
 
 	"github.com/spf13/cobra"
 )
@@ -67,7 +68,7 @@ var statusCmd = &cobra.Command{
 		defer c.Close()
 
 		// Get job status
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
 
 		status, exitCode, message, err := c.GetStatus(ctx, jobID)
@@ -75,11 +76,12 @@ var statusCmd = &cobra.Command{
 			return fmt.Errorf("GetStatus: %w", err)
 		}
 
-		fmt.Printf("Job ID: %s\n", jobID)
-		fmt.Printf("Status: %s\n", status.String())
-		if status.String() == "FINISHED" || status.String() == "FAILED" {
-			fmt.Printf("Message: %s\n", exitCodeMessage(exitCode, message))
-			fmt.Printf("Exit Code: %d\n", exitCode)
+		out := cmd.OutOrStdout()
+		fmt.Fprintf(out, "Job ID: %s\n", jobID)
+		fmt.Fprintf(out, "Status: %s\n", status.String())
+		if status == pb.GetStatusResponse_FINISHED || status == pb.GetStatusResponse_FAILED {
+			fmt.Fprintf(out, "Message: %s\n", exitCodeMessage(exitCode, message))
+			fmt.Fprintf(out, "Exit Code: %d\n", exitCode)
 		}
 		return nil
 	},

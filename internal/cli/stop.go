@@ -29,7 +29,7 @@ var stopCmd = &cobra.Command{
 		defer c.Close()
 
 		// Stop the job
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 		defer cancel()
 
 		success, message, err := c.StopJob(ctx, jobID)
@@ -41,7 +41,7 @@ var stopCmd = &cobra.Command{
 			return fmt.Errorf("Error: %s", message)
 		}
 
-		fmt.Println(message)
+		fmt.Fprintln(cmd.OutOrStdout(), message)
 		return nil
 	},
 }
