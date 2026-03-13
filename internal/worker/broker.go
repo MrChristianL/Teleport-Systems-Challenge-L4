@@ -18,7 +18,6 @@ import (
 type broker struct {
 	mu   sync.Mutex
 	cond *sync.Cond // used to broadcast new writes to open readers
-	done chan struct{}
 
 	file         *os.File
 	filePath     string
@@ -36,7 +35,6 @@ func newBroker(jobID string) (*broker, error) {
 	b := &broker{
 		file:     file,
 		filePath: filePath,
-		done:     make(chan struct{}),
 	}
 
 	b.cond = sync.NewCond(&b.mu)
@@ -86,7 +84,6 @@ func (b *broker) close() {
 
 	b.closed = true
 	b.file.Close() //closes the log file
-	close(b.done)  // b.done signals to readers that no more output will be committed
 
 	// When the broker is closed, readers are woken up one last time
 	// to read what data they may have left to take in, then exit

@@ -27,7 +27,7 @@ func NewTracker() *Tracker {
 }
 
 // genJobID generates a unique ID. Must be called with t.mu held, as done in AddJob
-func (t *Tracker) genJobID() (string, error) {
+func (t *Tracker) genJobID() string {
 	for {
 		// This returns a string like "job-XXXXXX", truncated to 6 characters for UX
 		id := "job-" + rand.Text()[:6]
@@ -35,7 +35,7 @@ func (t *Tracker) genJobID() (string, error) {
 		// check if newly generated ID is already assigned to a job.
 		// if no, return. if yes, loop continues and generates a new ID
 		if _, exists := t.jobs[id]; !exists {
-			return id, nil
+			return id
 		}
 	}
 }
@@ -45,10 +45,7 @@ func (t *Tracker) AddJob(command []string) (*Job, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	id, err := t.genJobID()
-	if err != nil {
-		return nil, fmt.Errorf("generating Job ID: %w", err)
-	}
+	id := t.genJobID()
 
 	// create job instance
 	job, err := newJob(id, command)

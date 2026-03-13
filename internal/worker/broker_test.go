@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"sync"
 	"testing"
 )
@@ -27,7 +26,7 @@ func TestLargeChunks(t *testing.T) {
 
 	var buf bytes.Buffer
 	if err := broker.streamFromDisk(t.Context(), &buf); err != nil {
-		log.Printf("streamFromDisk Error: %v", err)
+		t.Logf("streamFromDisk error: %v", err)
 	}
 
 	if buf.Len() != len(largeData) {
@@ -145,7 +144,7 @@ func TestBrokerStreamCompleteness(t *testing.T) {
 		var buf bytes.Buffer
 		readyWg.Done()
 		if err := broker.streamFromDisk(t.Context(), &buf); err != nil {
-			log.Printf("streamFromDisk Error: %v", err)
+			t.Logf("streamFromDisk error: %v", err)
 		}
 		readerOutput <- buf.Bytes()
 	})

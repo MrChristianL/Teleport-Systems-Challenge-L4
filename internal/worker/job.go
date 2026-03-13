@@ -1,6 +1,6 @@
 /* job.go
 
-Job defintes the actions and characteristics of a single job.
+Job defines the actions and characteristics of a single job.
 */
 
 package worker
@@ -18,14 +18,15 @@ import (
 type Status int
 
 const (
-	Running  Status = iota
-	Finished        // job ended on its own
-	Failed          // job exited with error
-	Stopped         // job stopped by user
+	Created Status = iota
+	Running
+	Finished // job ended on its own
+	Failed   // job exited with error
+	Stopped  // job stopped by user
 )
 
 func (s Status) String() string {
-	return [...]string{"RUNNING", "FINISHED", "FAILED", "STOPPED"}[s]
+	return [...]string{"CREATED", "RUNNING", "FINISHED", "FAILED", "STOPPED"}[s]
 }
 
 // Job represents a single process execution
@@ -99,6 +100,7 @@ func (j *Job) Start() error {
 	}
 
 	j.cmd = cmd
+	j.status = Running
 
 	// start monitoring job for completion
 	go j.watchForFinish(cmd) // calls cmd.Wait and updates job status
@@ -109,7 +111,7 @@ func (j *Job) Start() error {
 // Stop terminates a job via SIGKILL, blocking until process exits and then marking the job as Stopped
 func (j *Job) Stop() error {
 	j.mu.Lock()
-	if j.status != Running {
+	if j.status != Running || j.cmd == nil {
 		j.mu.Unlock()
 		return nil
 	}
