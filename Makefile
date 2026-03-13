@@ -9,12 +9,13 @@ bin/linux:
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  make build             - Build binaries"
-	@echo "  make run-server        - Build and run the gRPC server"
+
 	@echo "  make gen-proto         - Generate gRPC code from protobuf"
 	@echo "  make gen-certs         - Generate TLS certificates (requires openssl)"
 	@echo "  make test              - Run tests"
 	@echo "  make test-race         - Run tests with race detector"
+  @echo "  make build             - Build binaries"
+	@echo "  make run-server        - Build and run the gRPC server"
 	@echo "  make clean             - Remove built binaries"
 
 # -- proto --
