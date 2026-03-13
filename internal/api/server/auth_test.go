@@ -50,6 +50,34 @@ func TestIsAuthorized(t *testing.T) {
 	}
 }
 
+// TestRolePermissionsCoverage verifies that every RPC in the service descriptor is
+// covered by at least one role in rolePermissions. If a new RPC is added without
+// updating the authorization model, this test will fail.
+func TestRolePermissionsCoverage(t *testing.T) {
+	desc := pb.JobService_ServiceDesc
+
+	var allMethods []string
+	for _, m := range desc.Methods {
+		allMethods = append(allMethods, "/"+desc.ServiceName+"/"+m.MethodName)
+	}
+	for _, s := range desc.Streams {
+		allMethods = append(allMethods, "/"+desc.ServiceName+"/"+s.StreamName)
+	}
+
+	for _, method := range allMethods {
+		covered := false
+		for _, perms := range rolePermissions {
+			if _, ok := perms[method]; ok {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			t.Errorf("method %q is not covered by any role in rolePermissions", method)
+		}
+	}
+}
+
 // TestAuthWithClients verifies gRPC interceptors correctly extract identities
 // and return the appropriate gRPC status code (OK, PermissionDenied, or Unauthenticated)
 func TestAuthWithClients(t *testing.T) {
@@ -79,8 +107,7 @@ func TestAuthWithClients(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			// We use 'admin' as the creator to ensure a job exists
-			clients, cleanup := createNewServerMultipleClients(t, "admin", test.user)
-			defer cleanup()
+			clients := createNewServerMultipleClients(t, "admin", test.user)
 
 			adminClient := clients[0]
 			testClient := clients[1]

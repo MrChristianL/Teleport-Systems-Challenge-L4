@@ -20,7 +20,7 @@ func ConfigureServerTLS(caPath, certPath, keyPath string) (credentials.Transport
 	// Any client cert signed by this CA is to be trusted.
 	certPool := x509.NewCertPool()
 	if !certPool.AppendCertsFromPEM(clientCA) {
-		return nil, fmt.Errorf("creating cert pool: %v", err)
+		return nil, fmt.Errorf("failed to parse CA certificate")
 	}
 
 	// Load server cert and private key

@@ -4,64 +4,86 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"net"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	pb "github.com/mrchristianl/teleport-systems-challenge-l4/protobuf/v1"
+	"github.com/mrchristianl/teleport-systems-challenge-l4/internal/worker"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
 
-// TestTLSVersion verifies TLS 1.3 is enforced
+// TestTLSVersion verifies TLS 1.3 is enforced by the server
 func TestTLSVersion(t *testing.T) {
-	// Try to connect with TLS 1.2 - should fail
-	clientCert, err := tls.LoadX509KeyPair("../../../certs/admin-cert.pem", "../../../certs/admin-key.pem")
+	certs := certsDir()
+
+	// Start a test server
+	serverCreds, err := ConfigureServerTLS(
+		filepath.Join(certs, "ca-cert.pem"),
+		filepath.Join(certs, "server-cert.pem"),
+		filepath.Join(certs, "server-key.pem"),
+	)
 	if err != nil {
-		t.Fatalf("Failed to load cert: %v", err)
+		t.Fatalf("failed to configure server TLS: %v", err)
 	}
 
-	caCert, err := os.ReadFile("../../../certs/ca-cert.pem")
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("Failed to load CA: %v", err)
+		t.Fatalf("failed to listen: %v", err)
+	}
+
+	s := grpc.NewServer(
+		grpc.Creds(serverCreds),
+		grpc.UnaryInterceptor(UnaryInterceptor),
+		grpc.StreamInterceptor(StreamInterceptor),
+	)
+
+	tracker := worker.NewTracker()
+	pb.RegisterJobServiceServer(s, &server{tracker: tracker})
+	go s.Serve(lis)
+	t.Cleanup(s.Stop)
+
+	// Build a TLS 1.2-only client config
+	clientCert, err := tls.LoadX509KeyPair(
+		filepath.Join(certs, "admin-cert.pem"),
+		filepath.Join(certs, "admin-key.pem"),
+	)
+	if err != nil {
+		t.Fatalf("failed to load client cert: %v", err)
+	}
+
+	caCert, err := os.ReadFile(filepath.Join(certs, "ca-cert.pem"))
+	if err != nil {
+		t.Fatalf("failed to load CA cert: %v", err)
 	}
 
 	certPool := x509.NewCertPool()
 	certPool.AppendCertsFromPEM(caCert)
 
-	// Force TLS 1.2
-	config := &tls.Config{
+	creds := credentials.NewTLS(&tls.Config{
 		Certificates: []tls.Certificate{clientCert},
 		RootCAs:      certPool,
 		MinVersion:   tls.VersionTLS12,
-		MaxVersion:   tls.VersionTLS12, // Force TLS 1.2
-	}
+		MaxVersion:   tls.VersionTLS12, // Force TLS 1.2 — server should reject this
+	})
 
-	creds := credentials.NewTLS(config)
-
-	conn, err := grpc.NewClient("localhost:50051",
-		grpc.WithTransportCredentials(creds),
-	)
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(creds))
 	if err != nil {
-		t.Fatalf("Failed to create client: %v", err)
+		t.Fatalf("failed to create client: %v", err)
 	}
 	defer conn.Close()
 
-	// Try to make an RPC call - this will trigger the TLS handshake
+	// The TLS handshake happens on the first RPC, not at dial time
 	client := pb.NewJobServiceClient(conn)
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 
-	_, err = client.GetStatus(ctx, &pb.GetStatusRequest{
-		JobId: "test",
-	})
+	_, err = client.GetStatus(ctx, &pb.GetStatusRequest{JobId: "test"})
 	if err == nil {
-		t.Error("Server should reject TLS 1.2 connections")
-	}
-
-	// Verify it's a TLS-related error
-	if err == nil {
-		t.Errorf("expected error when connecting to server, got nil")
+		t.Error("expected server to reject TLS 1.2 connection, but RPC succeeded")
 	}
 }

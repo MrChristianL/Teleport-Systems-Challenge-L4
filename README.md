@@ -48,7 +48,7 @@ The Worker library provides process execution and output streaming primitives fo
 make test       # Run tests
 make test-race  # Run tests with race detector
 ```
-Test coverage: 87.4%
+Test coverage: **87.9%**
 All tests pass with race detector enabled.
 
 Key scenarios tested:
@@ -67,7 +67,7 @@ The gRPC server acts as the bridge between the client and the Worker library. Th
 - Multitenant output streaming support
 
 ### Testing
-Test coverage: **73.1**%
+Test coverage: **72.6%**
 All tests pass with race detector enabled.
 
 Key scenarios tested:

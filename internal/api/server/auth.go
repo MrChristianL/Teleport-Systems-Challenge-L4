@@ -18,16 +18,16 @@ var identityToRole = map[string]string{
 }
 
 // rolePermissions defines the RPCs each role is allowed to call
-var rolePermissions = map[string][]string{
+var rolePermissions = map[string]map[string]struct{}{
 	"admin": { // admin role: full access
-		"/jobctl.JobService/StartJob",
-		"/jobctl.JobService/StopJob",
-		"/jobctl.JobService/GetStatus",
-		"/jobctl.JobService/StreamOutput",
+		"/jobctl.JobService/StartJob":     {},
+		"/jobctl.JobService/StopJob":      {},
+		"/jobctl.JobService/GetStatus":    {},
+		"/jobctl.JobService/StreamOutput": {},
 	},
 	"user": { // user role: read-only access
-		"/jobctl.JobService/GetStatus",
-		"/jobctl.JobService/StreamOutput",
+		"/jobctl.JobService/GetStatus":    {},
+		"/jobctl.JobService/StreamOutput": {},
 	},
 	// any other role (e.g. unknown): no access
 }
@@ -47,12 +47,8 @@ func isAuthorized(role string, method string) bool {
 		return false // role has no permissions defined
 	}
 
-	for _, allowed := range allowedMethods {
-		if allowed == method {
-			return true
-		}
-	}
-	return false
+	_, allowed := allowedMethods[method]
+	return allowed
 }
 
 // Extract SANs from context (DNS-only)

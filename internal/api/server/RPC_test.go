@@ -16,8 +16,7 @@ import (
 // TestStartandGetStatus verifies the StartJob and GetStatus RPCs
 func TestStartAndGetStatus(t *testing.T) {
 	// start a server as admin
-	client, cleanup := createNewServerSingleClient(t, "admin")
-	defer cleanup()
+	client := createNewServerSingleClient(t, "admin")
 
 	job, err := client.StartJob(t.Context(), &pb.StartJobRequest{
 		Command: []string{"true"},
@@ -46,8 +45,7 @@ func TestStartAndGetStatus(t *testing.T) {
 // TestStopJob verifies the StopJob RPC and that stopped jobs return
 // status: STOPPED
 func TestStopJob(t *testing.T) {
-	client, cleanup := createNewServerSingleClient(t, "admin")
-	defer cleanup()
+	client := createNewServerSingleClient(t, "admin")
 
 	// start a long-running job
 	startResp, err := client.StartJob(t.Context(), &pb.StartJobRequest{
@@ -81,8 +79,7 @@ func TestStopJob(t *testing.T) {
 // TestMultipleClients verifies numerous clients can stream output at a time
 // and that unknown users are unable to stream output
 func TestMultipleClients(t *testing.T) {
-	clients, cleanup := createNewServerMultipleClients(t, "admin", "user", "unknown")
-	defer cleanup()
+	clients := createNewServerMultipleClients(t, "admin", "user", "unknown")
 
 	admin, user, unknown := clients[0], clients[1], clients[2]
 
@@ -145,8 +142,7 @@ func TestMultipleClients(t *testing.T) {
 
 // TestStreamLiveOutput verifies that clients can stream output as it is published to disk
 func TestStreamLiveOutput(t *testing.T) {
-	client, cleanup := createNewServerSingleClient(t, "admin")
-	defer cleanup()
+	client := createNewServerSingleClient(t, "admin")
 
 	// start a job that takes long enough to stream while running
 	startResp, err := client.StartJob(t.Context(), &pb.StartJobRequest{
@@ -186,8 +182,7 @@ func TestStreamLiveOutput(t *testing.T) {
 }
 
 func TestStreamLateSubscriber(t *testing.T) {
-	client, cleanup := createNewServerSingleClient(t, "admin")
-	defer cleanup()
+	client := createNewServerSingleClient(t, "admin")
 
 	startResp, err := client.StartJob(t.Context(), &pb.StartJobRequest{
 		Command: []string{"seq", "1", "500"},
@@ -255,8 +250,7 @@ func TestStreamLateSubscriber(t *testing.T) {
 
 // TestStopNonExistentJob verifies stopping a non-existent job returns an error
 func TestStopNonExistentJob(t *testing.T) {
-	client, cleanup := createNewServerSingleClient(t, "admin")
-	defer cleanup()
+	client := createNewServerSingleClient(t, "admin")
 
 	jobID := "job-123abc"
 
@@ -281,8 +275,7 @@ func TestStopNonExistentJob(t *testing.T) {
 
 // TestGetStatusNonExistentJob verifies GetStatus returns UNKNOWN for a non-existent job
 func TestGetStatusNonExistentJob(t *testing.T) {
-	client, cleanup := createNewServerSingleClient(t, "user")
-	defer cleanup()
+	client := createNewServerSingleClient(t, "user")
 
 	jobID := "job-123abc"
 
@@ -306,8 +299,7 @@ func TestGetStatusNonExistentJob(t *testing.T) {
 
 // TestStreamOutputNonExistentJob verifies StreamOutput returns error for non-existent jobs
 func TestStreamOutputNonExistentJob(t *testing.T) {
-	client, cleanup := createNewServerSingleClient(t, "user")
-	defer cleanup()
+	client := createNewServerSingleClient(t, "user")
 
 	jobID := "job-123abc"
 
@@ -333,9 +325,8 @@ func TestStreamOutputNonExistentJob(t *testing.T) {
 
 // TestStartJobBadCommand verifies StartJob returns an error for invalid commands.
 // The Python3 command is invalid in this case because we do not have that script present
-func TestStartJobBadCommmand(t *testing.T) {
-	client, cleanup := createNewServerSingleClient(t, "admin")
-	defer cleanup()
+func TestStartJobBadCommand(t *testing.T) {
+	client := createNewServerSingleClient(t, "admin")
 
 	// start a job
 	job, err := client.StartJob(t.Context(), &pb.StartJobRequest{
@@ -393,8 +384,7 @@ func TestStartJobBadCommmand(t *testing.T) {
 
 // TestStartJobNonExistentBinary verifies invalid StartJob return error when targeting non-existant binaries
 func TestStartJobNonExistentBinary(t *testing.T) {
-	client, cleanup := createNewServerSingleClient(t, "admin")
-	defer cleanup()
+	client := createNewServerSingleClient(t, "admin")
 
 	_, err := client.StartJob(t.Context(), &pb.StartJobRequest{
 		Command: []string{"/usr/local/nonexistent"},
@@ -417,8 +407,7 @@ func TestStartJobNonExistentBinary(t *testing.T) {
 
 // TestStreamCancellation verifies clients can cancel streams without canceling full jobs
 func TestStreamCancellation(t *testing.T) {
-	client, cleanup := createNewServerSingleClient(t, "admin")
-	defer cleanup()
+	client := createNewServerSingleClient(t, "admin")
 
 	job, err := client.StartJob(t.Context(), &pb.StartJobRequest{
 		Command: []string{"sleep", "10"},

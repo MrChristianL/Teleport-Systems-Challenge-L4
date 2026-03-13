@@ -69,6 +69,10 @@ func (s *server) GetStatus(ctx context.Context, req *pb.GetStatusRequest) (*pb.G
 	// map worker.Status to protoBuf Status
 	snapshot := job.Snapshot()
 
+	// worker.Created is intentionally left off of this switch. Clients never receive a job ID
+	// before Start() transitions the status to Running, so Created is unobservable via this GetStatus call.
+	// If a ListJobs action or a two-step create/run flow were added to the CLI in the future,
+	// this would need to be reflected in both the proto and this switch.
 	var pbStatus pb.GetStatusResponse_Status
 	switch snapshot.Status {
 	case worker.Running:

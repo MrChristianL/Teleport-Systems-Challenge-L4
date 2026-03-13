@@ -23,6 +23,8 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	pb "github.com/mrchristianl/teleport-systems-challenge-l4/protobuf/v1"
@@ -32,11 +34,19 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
+// certsDir returns the absolute path to the certs directory, derived from
+// this source file's location so tests work regardless of working directory.
+func certsDir() string {
+	_, thisFile, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(thisFile), "../../../certs")
+}
+
 // Create a new server, a new client on that server, and an server cleanup function
-func createNewServerSingleClient(t *testing.T, user string) (pb.JobServiceClient, func()) {
+func createNewServerSingleClient(t *testing.T, user string) pb.JobServiceClient {
 	t.Helper()
 
-	serverCreds, err := ConfigureServerTLS("../../../certs/ca-cert.pem", "../../../certs/server-cert.pem", "../../../certs/server-key.pem")
+	certs := certsDir()
+	serverCreds, err := ConfigureServerTLS(filepath.Join(certs, "ca-cert.pem"), filepath.Join(certs, "server-cert.pem"), filepath.Join(certs, "server-key.pem"))
 	if err != nil {
 		t.Fatalf("failed to configure server TLS: %v", err)
 	}
@@ -61,20 +71,21 @@ func createNewServerSingleClient(t *testing.T, user string) (pb.JobServiceClient
 		t.Fatalf("failed to connect client: %v", err)
 	}
 
-	cleanup := func() {
+	t.Cleanup(func() {
 		conn.Close()
 		s.Stop()
-	}
+	})
 
-	return pb.NewJobServiceClient(conn), cleanup
+	return pb.NewJobServiceClient(conn)
 }
 
 // Create a new server with multiple clients connected to that server
-func createNewServerMultipleClients(t *testing.T, users ...string) ([]pb.JobServiceClient, func()) {
+func createNewServerMultipleClients(t *testing.T, users ...string) []pb.JobServiceClient {
 	t.Helper()
 
 	// start one server
-	serverCreds, err := ConfigureServerTLS("../../../certs/ca-cert.pem", "../../../certs/server-cert.pem", "../../../certs/server-key.pem")
+	certs := certsDir()
+	serverCreds, err := ConfigureServerTLS(filepath.Join(certs, "ca-cert.pem"), filepath.Join(certs, "server-cert.pem"), filepath.Join(certs, "server-key.pem"))
 	if err != nil {
 		t.Fatalf("failed to configure server TLS: %v", err)
 	}
@@ -107,29 +118,30 @@ func createNewServerMultipleClients(t *testing.T, users ...string) ([]pb.JobServ
 		clients = append(clients, pb.NewJobServiceClient(conn))
 	}
 
-	cleanup := func() {
+	t.Cleanup(func() {
 		for _, conn := range conns {
 			conn.Close()
 		}
 		s.Stop()
-	}
+	})
 
-	return clients, cleanup
+	return clients
 }
 
 // Allows client to selection of which cert to use
 func connectClientWithCert(t *testing.T, addr string, certPrefix string) (*grpc.ClientConn, error) {
 	t.Helper()
 
+	certs := certsDir()
 	clientCert, err := tls.LoadX509KeyPair(
-		fmt.Sprintf("../../../certs/%s-cert.pem", certPrefix),
-		fmt.Sprintf("../../../certs/%s-key.pem", certPrefix),
+		filepath.Join(certs, certPrefix+"-cert.pem"),
+		filepath.Join(certs, certPrefix+"-key.pem"),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load %s cert: %v", certPrefix, err)
 	}
 
-	caCert, err := os.ReadFile("../../../certs/ca-cert.pem")
+	caCert, err := os.ReadFile(filepath.Join(certs, "ca-cert.pem"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read CA cert: %v", err)
 	}
