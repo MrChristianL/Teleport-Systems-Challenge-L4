@@ -33,7 +33,7 @@ The Worker library provides process execution and output streaming primitives fo
 
 - **Job**: Process lifecycle management with output streaming
 - **Tracker**: Job registry with unique ID generation
-- **Broker**: Disk-backed output logging with sync.Cond coordination (internal)
+- **Broker**: Disk-backed output logging with `sync.Cond` coordination (internal)
 
 ### Features
 - Event-driven streaming (no polling)
@@ -67,12 +67,27 @@ The gRPC server acts as the bridge between the client and the Worker library. Th
 - Multitenant output streaming support
 
 ### Testing
-Test coverage: **72.6%**
+Test coverage: **72.0%**
 All tests pass with race detector enabled.
 
 Key scenarios tested:
 - RPCs are limited based on user role
 - TLS enforced
-- Context cancelation of streams, not jobs
+- Context cancellation of streams, not jobs
 - Streaming live and historical output
 
+## API (Client)
+The gRPC client is the entry point for the end-user's CLI tool. It manages the mTLS handshake, credential loading, and the lifecycle of long-lived gRPC streams, ensuring secure and resilient communication with the remote service.
+
+### Features
+- Client-side RPC operators
+- mTLS configuration (TLS 1.3 enforced)
+
+### Testing
+Test coverage: **77.3%**
+All tests pass with race detector enabled.
+
+Key scenarios tested:
+- Non-existent job interactions
+- Client response to no server
+- Multi-client output streaming
