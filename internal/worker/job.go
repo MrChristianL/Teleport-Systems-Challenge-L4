@@ -46,9 +46,7 @@ type Job struct {
 	broker *broker
 
 	// job lifecycle
-	starting bool
-	done     chan struct{}
-	onceDone sync.Once // to ensure cleanup occurs exactly once
+	done chan struct{}
 }
 
 type JobSnapshot struct {
@@ -82,12 +80,11 @@ func newJob(id string, command []string) (*Job, error) {
 // Start begins job execution and captures output
 func (j *Job) Start() error {
 	j.mu.Lock()
-	if j.cmd != nil || j.starting {
-		j.mu.Unlock()
+	defer j.mu.Unlock()
+
+	if j.cmd != nil {
 		return errors.New("job has already started")
 	}
-	j.starting = true
-	j.mu.Unlock()
 
 	cmd := exec.Command(j.Command[0], j.Command[1:]...)
 
@@ -96,17 +93,15 @@ func (j *Job) Start() error {
 	cmd.Stderr = j.broker
 
 	// start job (non-blocking)
-	// cmd.Start() is considered potentially slow, so the lock is not held to avoid risking holding up other processes
 	if err := cmd.Start(); err != nil {
+		j.status = Failed
 		return fmt.Errorf("starting job: %w", err)
 	}
 
-	j.mu.Lock()
 	j.cmd = cmd
-	j.mu.Unlock()
 
 	// start monitoring job for completion
-	go j.watchForFinish() // calls cmd.Wait and updates job status
+	go j.watchForFinish(cmd) // calls cmd.Wait and updates job status
 
 	return nil
 }
@@ -170,15 +165,7 @@ func (j *Job) StreamFromDisk(ctx context.Context, out io.Writer) error {
 	return b.streamFromDisk(ctx, out)
 }
 
-func (j *Job) watchForFinish() {
-	j.mu.Lock()
-	cmd := j.cmd
-	j.mu.Unlock()
-
-	if cmd == nil { // if cmd is empty, there is nothing to wait for
-		return
-	}
-
+func (j *Job) watchForFinish(cmd *exec.Cmd) {
 	// blocks until the process exits and OS pipes are closed
 	// Wait() will only return once writer pipes are drained
 	err := cmd.Wait()
@@ -188,10 +175,8 @@ func (j *Job) watchForFinish() {
 	defer j.mu.Unlock()
 
 	// close broker (signals readers to stop waiting) and done channel (signals Stop() to return)
-	defer j.onceDone.Do(func() {
-		j.broker.close()
-		close(j.done)
-	})
+	defer j.broker.close()
+	defer close(j.done)
 
 	if j.status != Running {
 		j.exitCode = 137 // stopped via SIGKILL

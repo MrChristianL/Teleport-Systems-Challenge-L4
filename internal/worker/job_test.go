@@ -3,6 +3,7 @@ package worker
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sync"
 	"testing"
 )
@@ -267,7 +268,7 @@ func TestStreamCancellation(t *testing.T) {
 
 	err := job.StreamFromDisk(ctx, &bytes.Buffer{})
 
-	if err != context.Canceled {
+	if !errors.Is(err, context.Canceled) {
 		t.Errorf("streamFromDisk() error = %v, want %v", err, context.Canceled)
 	}
 }

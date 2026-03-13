@@ -102,17 +102,15 @@ func (b *broker) streamFromDisk(ctx context.Context, out io.Writer) error {
 	}
 	defer f.Close()
 
-	// Watchdog to ensure readers do not indefinitely hang on cancelation
-	go func() {
-		select {
-		case <-ctx.Done():
-		case <-b.done: // Exit if the broker closes naturally
-			return
-		}
+	// Broadcast to unblock any readers in Wait() if the context is canceled.
+	// stopf is deferred so that if streamFromDisk returns before ctx is canceled
+	// (e.g. the broker closed naturally), the broadcast is suppressed.
+	stopf := context.AfterFunc(ctx, func() {
 		b.mu.Lock()
 		b.cond.Broadcast()
 		b.mu.Unlock()
-	}()
+	})
+	defer stopf()
 
 	var offset int64
 

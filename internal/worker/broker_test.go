@@ -2,6 +2,7 @@ package worker
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -52,7 +53,7 @@ func TestClosedBroker(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error writing to closed broker, got none")
 	}
-	if err != io.ErrClosedPipe {
+	if !errors.Is(err, io.ErrClosedPipe) {
 		t.Errorf("expected io.ErrClosedPipe, got %v", err)
 	}
 

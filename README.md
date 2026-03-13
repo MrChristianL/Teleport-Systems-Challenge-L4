@@ -32,8 +32,7 @@ The Worker library provides process execution and output streaming primitives fo
 make test       # Run tests
 make test-race  # Run tests with race detector
 ```
-
-Test coverage: 88.2%
+Test coverage: 87.4%
 All tests pass with race detector enabled.
 
 Key scenarios tested:
